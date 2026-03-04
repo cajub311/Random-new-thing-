@@ -137,6 +137,8 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   cursor: pointer; transition: all var(--transition); text-align: left; min-width: 140px;
 }
 .provider-card:hover { border-color: var(--accent); background: var(--surface); }
+.provider-card.configured { border-color: var(--success); }
+.provider-card.configured .card-tag { color: var(--success); }
 .provider-card .card-name { font-weight: 600; color: var(--text); }
 .provider-card .card-tag { color: var(--success); font-size: 0.72rem; margin-top: 2px; }
 
@@ -217,6 +219,36 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 #userInput::placeholder { color: var(--text-muted); }
 
 .disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-muted); padding: 4px 20px 10px; }
+
+/* ── Mode toggle ─────────────────────────────────────────────────────── */
+.mode-toggle { display: flex; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 6px; }
+.mode-btn { flex: 1; padding: 7px 4px; background: transparent; border: none; color: var(--text-muted); font-size: 0.8rem; cursor: pointer; transition: all var(--transition); font-family: inherit; }
+.mode-btn.active { background: var(--accent); color: #fff; font-weight: 600; }
+.mode-btn:hover:not(.active) { background: var(--surface2); color: var(--text); }
+.mode-hint { display: block; font-size: 0.7rem; color: var(--text-muted); line-height: 1.4; }
+
+/* ── Provider pill in topbar ─────────────────────────────────────────── */
+.provider-pill {
+  font-size: 0.72rem; padding: 2px 10px; border-radius: 20px;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text-muted); flex-shrink: 0;
+}
+.provider-pill.online { border-color: var(--success); color: var(--success); }
+
+/* ── Provider badge on Ask All messages ──────────────────────────────── */
+.provider-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 20px;
+  font-size: 0.7rem; font-weight: 600;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--accent2); margin-bottom: 4px;
+}
+
+/* ── Warning status dot ──────────────────────────────────────────────── */
+.status-dot.warning { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
+
+/* ── Ask-all response group ──────────────────────────────────────────── */
+.ask-all-group { border-left: 2px solid var(--accent); padding-left: 10px; }
 
 /* ── Responsive ──────────────────────────────────────────────────────── */
 @media (max-width: 640px) {

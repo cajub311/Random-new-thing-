@@ -16,7 +16,16 @@
     </div>
 
     <div class="sidebar-section">
-      <label>AI Provider</label>
+      <label>Chat Mode</label>
+      <div class="mode-toggle" id="modeToggle">
+        <button class="mode-btn active" data-mode="auto" title="Auto-selects and falls back through providers">⚡ Auto</button>
+        <button class="mode-btn" data-mode="ask-all" title="Ask all configured providers at once">✦ Ask All</button>
+      </div>
+      <span class="mode-hint" id="modeHint">Tries providers in order, auto-fallback on failure</span>
+    </div>
+
+    <div class="sidebar-section">
+      <label>Preferred Provider</label>
       <select id="providerSelect"></select>
     </div>
 
@@ -46,7 +55,7 @@
 
     <div class="sidebar-footer">
       <div id="statusDot" class="status-dot offline"></div>
-      <span id="statusText">No provider selected</span>
+      <span id="statusText">Loading providers…</span>
     </div>
   </aside>
 
@@ -54,7 +63,8 @@
   <main class="main">
     <header class="topbar">
       <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
-      <span class="topbar-title">CloudClaw AI Assistant</span>
+      <span class="topbar-title">CloudClaw AI</span>
+      <span class="provider-pill" id="activePill"></span>
       <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
     </header>
 
@@ -62,9 +72,9 @@
       <div class="welcome">
         <div class="welcome-icon">🐾</div>
         <h1>Welcome to CloudClaw</h1>
-        <p>A free, open, cloud-hosted AI assistant powered by the best free AI providers.</p>
+        <p>Free, open AI — powered by the best no-cost API providers.</p>
         <div class="provider-cards" id="providerCards"></div>
-        <p class="tip">Select a provider in the sidebar, add your free API key, and start chatting!</p>
+        <p class="tip" id="welcomeTip">Add at least one free API key in the sidebar and start chatting — CloudClaw handles the rest.</p>
       </div>
     </div>
 

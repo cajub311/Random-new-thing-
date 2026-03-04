@@ -1,12 +1,16 @@
 /* ── CloudClaw frontend app ──────────────────────────────────────────── */
 
-const API = '';  // same-origin; set to e.g. 'https://yourapp.onrender.com' if separate
+const API = '';  // same-origin; set full URL if backend is separate
 
 // ── State ─────────────────────────────────────────────────────────────────
-let providers = {};
-let messages = [];       // {role, content}[]
-let isLoading = false;
+let providers  = {};
+let messages   = [];        // {role, content}[] — conversation history
+let isLoading  = false;
+let chatMode   = 'auto';    // 'auto' | 'ask-all'
 let pendingFileText = null;
+
+// Provider priority for auto-fallback
+const PROVIDER_ORDER = ['groq', 'grok', 'gemini', 'cohere', 'together', 'huggingface'];
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -32,6 +36,9 @@ const sidebar        = document.getElementById('sidebar');
 const providerCards  = document.getElementById('providerCards');
 const attachBtn      = document.getElementById('attachBtn');
 const fileInput      = document.getElementById('fileInput');
+const modeToggle     = document.getElementById('modeToggle');
+const modeHint       = document.getElementById('modeHint');
+const activePill     = document.getElementById('activePill');
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -41,6 +48,7 @@ async function init() {
     providers = await res.json();
     buildProviderUI();
     restoreProvider();
+    updateStatus();
   } catch (e) {
     setStatus('error', 'Cannot reach server');
   }
@@ -56,8 +64,10 @@ function buildProviderUI() {
     providerSelect.appendChild(opt);
 
     const card = document.createElement('div');
-    card.className = 'provider-card';
-    card.innerHTML = `<div class="card-name">${p.name}</div><div class="card-tag">FREE tier</div>`;
+    card.className = 'provider-card' + (p.configured ? ' configured' : '');
+    card.innerHTML = `
+      <div class="card-name">${p.name}</div>
+      <div class="card-tag">${p.configured ? '✓ Connected' : 'FREE tier'}</div>`;
     card.addEventListener('click', () => {
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
@@ -69,8 +79,11 @@ function buildProviderUI() {
 }
 
 function restoreProvider() {
+  // Auto-select the first provider that has a key available
   const saved = localStorage.getItem('cc_provider');
-  if (saved && providers[saved]) providerSelect.value = saved;
+  const firstAvailable = getAvailableProviders()[0]?.id;
+  const target = (saved && providers[saved]) ? saved : (firstAvailable || Object.keys(providers)[0]);
+  if (target) providerSelect.value = target;
   providerSelect.dispatchEvent(new Event('change'));
 }
 
@@ -100,19 +113,64 @@ providerSelect.addEventListener('change', () => {
 
 apiKeyInput.addEventListener('input', () => {
   const id = providerSelect.value;
-  localStorage.setItem(`cc_key_${id}`, apiKeyInput.value.trim());
+  const trimmed = apiKeyInput.value.trim();
+  if (trimmed) {
+    localStorage.setItem(`cc_key_${id}`, trimmed);
+  } else {
+    localStorage.removeItem(`cc_key_${id}`);
+  }
   updateStatus();
 });
 
+// ── Mode toggle ────────────────────────────────────────────────────────────
+modeToggle.addEventListener('click', e => {
+  const btn = e.target.closest('.mode-btn');
+  if (!btn) return;
+  chatMode = btn.dataset.mode;
+  modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
+  modeHint.textContent = chatMode === 'auto'
+    ? 'Tries providers in order, auto-fallback on failure'
+    : 'Sends to all configured providers simultaneously';
+  updateStatus();
+  localStorage.setItem('cc_mode', chatMode);
+});
+
+// ── Available providers helper ─────────────────────────────────────────────
+function getAvailableProviders() {
+  // Returns [{id, key}] in priority order for providers that have a key available
+  const preferred = providerSelect.value;
+  const ordered = [preferred, ...PROVIDER_ORDER.filter(id => id !== preferred)];
+  return ordered
+    .filter(id => providers[id])
+    .map(id => {
+      const key = localStorage.getItem(`cc_key_${id}`) || '';
+      const configured = providers[id].configured;  // set by server env var
+      if (key || configured) return { id, key };
+      return null;
+    })
+    .filter(Boolean);
+}
+
+// ── Status helpers ─────────────────────────────────────────────────────────
 function updateStatus() {
-  const id = providerSelect.value;
-  const p = providers[id];
-  if (!p) { setStatus('offline', 'No provider'); return; }
-  const key = apiKeyInput.value.trim() || (p.configured ? '(server)' : '');
-  if (key) {
-    setStatus('online', `${p.name} ready`);
+  const available = getAvailableProviders();
+  if (available.length === 0) {
+    setStatus('offline', 'No keys configured');
+    activePill.textContent = '';
+    activePill.className = 'provider-pill';
+    return;
+  }
+  if (chatMode === 'ask-all') {
+    setStatus('online', `${available.length} provider${available.length > 1 ? 's' : ''} ready`);
+    activePill.textContent = `Ask All (${available.length})`;
+    activePill.className = 'provider-pill online';
   } else {
-    setStatus('offline', `Add ${p.name} key`);
+    const first = available[0];
+    const name = providers[first.id].name;
+    const extra = available.length > 1 ? ` +${available.length - 1} fallback${available.length > 2 ? 's' : ''}` : '';
+    setStatus('online', `${name}${extra}`);
+    activePill.textContent = name;
+    activePill.className = 'provider-pill online';
   }
 }
 
@@ -121,6 +179,121 @@ function setStatus(state, text) {
   statusText.textContent = text;
 }
 
+// ── Low-level API call ─────────────────────────────────────────────────────
+async function callProvider(id, key, msgs) {
+  const res = await fetch(`${API}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: id,
+      model: (providerSelect.value === id) ? modelSelect.value : providers[id].defaultModel,
+      apiKey: key || undefined,
+      messages: [
+        { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
+        ...msgs,
+      ],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'Unknown error');
+  return data; // {reply, provider, model}
+}
+
+// ── Auto mode: try providers in order, fallback on failure ─────────────────
+async function sendAuto(msgs) {
+  const available = getAvailableProviders();
+  if (available.length === 0) {
+    appendMessage('assistant', 'No API keys configured. Add at least one free key in the sidebar.', true);
+    setLoading(false);
+    return;
+  }
+
+  const typingId = appendTyping(providers[available[0].id].name);
+
+  for (let i = 0; i < available.length; i++) {
+    const { id, key } = available[i];
+    const name = providers[id].name;
+    if (i > 0) setStatus('warning', `Trying ${name}…`);
+    try {
+      const data = await callProvider(id, key, msgs);
+      removeTyping(typingId);
+      appendMessage('assistant', data.reply, false, id);
+      messages.push({ role: 'assistant', content: data.reply });
+      setStatus('online', `${name} responded`);
+      activePill.textContent = name;
+      activePill.className = 'provider-pill online';
+      return;
+    } catch (err) {
+      if (i < available.length - 1) {
+        setStatus('warning', `${name} failed — trying ${providers[available[i + 1].id].name}…`);
+      }
+    }
+  }
+
+  removeTyping(typingId);
+  appendMessage('assistant', 'All providers failed. Please check your API keys.', true);
+  setStatus('error', 'All providers failed');
+}
+
+// ── Ask All mode: fan out, show each response with badge ──────────────────
+async function sendAskAll(msgs) {
+  const available = getAvailableProviders();
+  if (available.length === 0) {
+    appendMessage('assistant', 'No API keys configured. Add at least one free key in the sidebar.', true);
+    setLoading(false);
+    return;
+  }
+
+  // One typing bubble per provider
+  const slots = available.map(({ id }) => ({
+    id,
+    typingId: appendTyping(providers[id].name),
+  }));
+
+  await Promise.allSettled(available.map(async ({ id, key }, i) => {
+    try {
+      const data = await callProvider(id, key, msgs);
+      removeTyping(slots[i].typingId);
+      appendMessage('assistant', data.reply, false, id, true /* isAskAll */);
+    } catch (err) {
+      removeTyping(slots[i].typingId);
+      appendMessage('assistant', `[${providers[id].name}] ${err.message}`, true, id, true);
+    }
+  }));
+
+  // Ask All doesn't push to conversation history (it's compare mode)
+  setStatus('online', `${available.length} providers answered`);
+}
+
+// ── Submit handler ─────────────────────────────────────────────────────────
+chatForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  if (isLoading) return;
+  let text = userInput.value.trim();
+  if (!text && !pendingFileText) return;
+
+  if (pendingFileText) {
+    text = text ? `${text}\n\n\`\`\`\n${pendingFileText}\n\`\`\`` : `\`\`\`\n${pendingFileText}\n\`\`\``;
+    pendingFileText = null;
+    userInput.placeholder = 'Ask anything… (Shift+Enter for new line)';
+  }
+
+  userInput.value = '';
+  userInput.style.height = 'auto';
+  removeWelcome();
+  appendMessage('user', text);
+  messages.push({ role: 'user', content: text });
+  setLoading(true);
+
+  if (chatMode === 'ask-all') {
+    await sendAskAll([...messages]);
+  } else {
+    await sendAuto([...messages]);
+  }
+
+  setLoading(false);
+});
+
 // ── UI controls ────────────────────────────────────────────────────────────
 toggleKeyBtn.addEventListener('click', () => {
   apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
@@ -128,22 +301,14 @@ toggleKeyBtn.addEventListener('click', () => {
 
 tempRange.addEventListener('input', () => tempVal.textContent = tempRange.value);
 
-clearBtn.addEventListener('click', () => {
-  messages = [];
-  showWelcome();
-});
-
-newChatBtn.addEventListener('click', () => {
-  messages = [];
-  showWelcome();
-});
+clearBtn.addEventListener('click', () => { messages = []; showWelcome(); });
+newChatBtn.addEventListener('click', () => { messages = []; showWelcome(); });
 
 sidebarToggle.addEventListener('click', () => {
   sidebar.classList.toggle('collapsed');
   sidebar.classList.toggle('open');
 });
 
-// ── Auto-resize textarea ───────────────────────────────────────────────────
 userInput.addEventListener('input', () => {
   userInput.style.height = 'auto';
   userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
@@ -156,7 +321,6 @@ userInput.addEventListener('keydown', e => {
   }
 });
 
-// ── File attach ────────────────────────────────────────────────────────────
 attachBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files[0];
@@ -166,77 +330,9 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
 });
 
-// ── Send message ───────────────────────────────────────────────────────────
-chatForm.addEventListener('submit', async e => {
-  e.preventDefault();
-  if (isLoading) return;
-  let text = userInput.value.trim();
-  if (!text && !pendingFileText) return;
-
-  if (pendingFileText) {
-    text = `${text}\n\n\`\`\`\n${pendingFileText}\n\`\`\``;
-    pendingFileText = null;
-    userInput.placeholder = 'Ask anything… (Shift+Enter for new line)';
-  }
-
-  const id = providerSelect.value;
-  const p = providers[id];
-  const apiKey = apiKeyInput.value.trim();
-  if (!p) { alert('Please select a provider.'); return; }
-  if (!apiKey && !p.configured) {
-    alert(`Please enter your ${p.name} API key. You can get one free at:\n${p.signupUrl}`);
-    return;
-  }
-
-  userInput.value = '';
-  userInput.style.height = 'auto';
-
-  removeWelcome();
-  appendMessage('user', text);
-  messages.push({ role: 'user', content: text });
-
-  const typingId = appendTyping();
-  setLoading(true);
-
-  try {
-    const payload = {
-      provider: id,
-      model: modelSelect.value,
-      apiKey: apiKey || undefined,
-      messages: [
-        { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
-        ...messages,
-      ],
-      temperature: parseFloat(tempRange.value),
-    };
-
-    const res = await fetch(`${API}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
-    removeTyping(typingId);
-
-    if (!res.ok || data.error) {
-      appendMessage('assistant', data.error || 'Unknown error', true);
-    } else {
-      appendMessage('assistant', data.reply);
-      messages.push({ role: 'assistant', content: data.reply });
-    }
-  } catch (err) {
-    removeTyping(typingId);
-    appendMessage('assistant', `Network error: ${err.message}`, true);
-  } finally {
-    setLoading(false);
-  }
-});
-
 // ── Render helpers ─────────────────────────────────────────────────────────
 function removeWelcome() {
-  const w = messagesEl.querySelector('.welcome');
-  if (w) w.remove();
+  messagesEl.querySelector('.welcome')?.remove();
 }
 
 function showWelcome() {
@@ -244,35 +340,42 @@ function showWelcome() {
     <div class="welcome">
       <div class="welcome-icon">🐾</div>
       <h1>Welcome to CloudClaw</h1>
-      <p>A free, open, cloud-hosted AI assistant powered by the best free AI providers.</p>
-      <div class="provider-cards" id="providerCards"></div>
-      <p class="tip">Select a provider in the sidebar, add your free API key, and start chatting!</p>
+      <p>Free, open AI — powered by the best no-cost API providers.</p>
+      <div class="provider-cards" id="providerCardsWelcome"></div>
+      <p class="tip">Add at least one free API key in the sidebar — CloudClaw auto-connects and falls back if needed.</p>
     </div>`;
-  // Re-bind provider cards after rebuilding DOM
-  const newCards = document.getElementById('providerCards');
+  const cards = document.getElementById('providerCardsWelcome');
   for (const [id, p] of Object.entries(providers)) {
     const card = document.createElement('div');
-    card.className = 'provider-card';
-    card.innerHTML = `<div class="card-name">${p.name}</div><div class="card-tag">FREE tier</div>`;
-    card.addEventListener('click', () => { providerSelect.value = id; providerSelect.dispatchEvent(new Event('change')); });
-    newCards.appendChild(card);
+    card.className = 'provider-card' + (getAvailableProviders().some(a => a.id === id) ? ' configured' : '');
+    card.innerHTML = `<div class="card-name">${p.name}</div><div class="card-tag">${getAvailableProviders().some(a => a.id === id) ? '✓ Connected' : 'FREE tier'}</div>`;
+    card.addEventListener('click', () => {
+      providerSelect.value = id;
+      providerSelect.dispatchEvent(new Event('change'));
+      sidebar.classList.remove('collapsed');
+      sidebar.classList.add('open');
+    });
+    cards.appendChild(card);
   }
 }
 
-function appendMessage(role, content, isError = false) {
+function appendMessage(role, content, isError = false, providerId = null, isAskAll = false) {
   const div = document.createElement('div');
-  div.className = `message ${role}`;
+  div.className = `message ${role}${isAskAll ? ' ask-all-group' : ''}`;
   const avatar = role === 'user' ? '🧑' : '🐾';
-  const name   = role === 'user' ? 'You' : (providers[providerSelect.value]?.name || 'AI');
+  const name   = role === 'user' ? 'You' : (providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name) || 'AI';
   div.innerHTML = `
-    <div class="msg-meta"><span class="msg-avatar">${avatar}</span><strong>${name}</strong><span>${timestamp()}</span></div>
+    <div class="msg-meta">
+      <span class="msg-avatar">${avatar}</span>
+      <strong>${name}</strong>
+      <span>${timestamp()}</span>
+    </div>
     <div class="msg-bubble${isError ? ' error-bubble' : ''}">${renderMarkdown(content)}</div>
     <div class="msg-actions">
       <button class="msg-action-btn copy-btn">Copy</button>
-      ${role === 'assistant' ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
+      ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
     </div>`;
 
-  // Add copy-code buttons to <pre> blocks
   div.querySelectorAll('pre').forEach(pre => {
     const btn = document.createElement('button');
     btn.className = 'copy-code-btn';
@@ -286,16 +389,14 @@ function appendMessage(role, content, isError = false) {
     pre.appendChild(btn);
   });
 
-  // Copy message button
   div.querySelector('.copy-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(content);
-    div.querySelector('.copy-btn').textContent = 'Copied!';
-    setTimeout(() => div.querySelector('.copy-btn') && (div.querySelector('.copy-btn').textContent = 'Copy'), 2000);
+    const btn = div.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { if (btn) btn.textContent = 'Copy'; }, 2000);
   });
 
-  // Retry button
   div.querySelector('.retry-btn')?.addEventListener('click', () => {
-    // Remove last assistant message, re-send
     messages.pop();
     div.remove();
     chatForm.dispatchEvent(new Event('submit'));
@@ -306,22 +407,24 @@ function appendMessage(role, content, isError = false) {
   return div;
 }
 
-function appendTyping() {
-  const id = 'typing-' + Date.now();
+function appendTyping(providerName = 'AI') {
+  const id = 'typing-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   const div = document.createElement('div');
   div.className = 'message assistant';
   div.id = id;
   div.innerHTML = `
-    <div class="msg-meta"><span class="msg-avatar">🐾</span><strong>${providers[providerSelect.value]?.name || 'AI'}</strong></div>
-    <div class="msg-bubble"><div class="typing-bubble"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div></div>`;
+    <div class="msg-meta"><span class="msg-avatar">🐾</span><strong>${providerName}</strong></div>
+    <div class="msg-bubble">
+      <div class="typing-bubble">
+        <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+      </div>
+    </div>`;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return id;
 }
 
-function removeTyping(id) {
-  document.getElementById(id)?.remove();
-}
+function removeTyping(id) { document.getElementById(id)?.remove(); }
 
 function setLoading(state) {
   isLoading = state;
@@ -334,54 +437,34 @@ function timestamp() {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// ── Markdown renderer (no external deps) ──────────────────────────────────
+// ── Markdown renderer ──────────────────────────────────────────────────────
 function renderMarkdown(text) {
-  // Escape HTML first
   let html = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // Fenced code blocks
   html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
     `<pre><code class="lang-${lang}">${code.trimEnd()}</code></pre>`);
-
-  // Inline code
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-  // Headers
   html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
   html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
   html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-  // Bold / italic
   html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
   html = html.replace(/_(.+?)_/g, '<em>$1</em>');
-
-  // Blockquote
   html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-
-  // HR
   html = html.replace(/^---$/gm, '<hr>');
-
-  // Unordered list
   html = html.replace(/(^[*\-] .+(\n[*\-] .+)*)/gm, block => {
     const items = block.split('\n').map(l => `<li>${l.replace(/^[*\-] /, '')}</li>`).join('');
     return `<ul>${items}</ul>`;
   });
-
-  // Ordered list
   html = html.replace(/(^\d+\. .+(\n\d+\. .+)*)/gm, block => {
     const items = block.split('\n').map(l => `<li>${l.replace(/^\d+\. /, '')}</li>`).join('');
     return `<ol>${items}</ol>`;
   });
-
-  // Links
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-
-  // Tables (simple)
   html = html.replace(/((\|.+\|\n)+)/g, block => {
     const rows = block.trim().split('\n').filter(r => !/^\|[-:| ]+\|$/.test(r));
     if (rows.length < 1) return block;
@@ -390,17 +473,10 @@ function renderMarkdown(text) {
     const trs = body.map(r => '<tr>' + r.split('|').filter(Boolean).map(c => `<td>${c.trim()}</td>`).join('') + '</tr>').join('');
     return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
   });
-
-  // Paragraphs (double newline → <p>)
   html = html.replace(/\n\n+/g, '</p><p>');
   html = `<p>${html}</p>`;
-
-  // Single newline → <br> inside <p>
   html = html.replace(/(?<!<\/?(p|h[1-6]|ul|ol|li|blockquote|pre|table|tr|td|th|hr)[^>]*>)\n(?!<\/?[a-z])/g, '<br>');
-
-  // Clean up empty <p>
   html = html.replace(/<p>\s*<\/p>/g, '');
-
   return html;
 }
 
@@ -410,6 +486,12 @@ function loadSettings() {
   if (sys) systemPrompt.value = sys;
   const temp = localStorage.getItem('cc_temp');
   if (temp) { tempRange.value = temp; tempVal.textContent = temp; }
+  const mode = localStorage.getItem('cc_mode');
+  if (mode === 'ask-all') {
+    chatMode = 'ask-all';
+    modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'ask-all'));
+    modeHint.textContent = 'Sends to all configured providers simultaneously';
+  }
 }
 
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
