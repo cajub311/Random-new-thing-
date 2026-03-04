@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import 'dotenv/config';
@@ -19,18 +18,28 @@ const PROVIDERS = {
     name: 'Groq (Llama 3)',
     url: 'https://api.groq.com/openai/v1/chat/completions',
     envKey: 'GROQ_API_KEY',
-    models: ['llama3-70b-8192', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
+    models: ['llama3-70b-8192', 'llama3-8b-8192', 'mixtral-8x7b-32768', 'gemma2-9b-it'],
     defaultModel: 'llama3-70b-8192',
     free: true,
     signupUrl: 'https://console.groq.com',
+    format: 'openai',
+  },
+  grok: {
+    name: 'xAI Grok',
+    url: 'https://api.x.ai/v1/chat/completions',
+    envKey: 'XAI_API_KEY',
+    models: ['grok-3-mini', 'grok-2-1212', 'grok-beta'],
+    defaultModel: 'grok-3-mini',
+    free: true,
+    signupUrl: 'https://console.x.ai',
     format: 'openai',
   },
   gemini: {
     name: 'Google Gemini',
     url: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
     envKey: 'GEMINI_API_KEY',
-    models: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp'],
-    defaultModel: 'gemini-1.5-flash',
+    models: ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+    defaultModel: 'gemini-2.0-flash',
     free: true,
     signupUrl: 'https://aistudio.google.com',
     format: 'gemini',
@@ -49,7 +58,7 @@ const PROVIDERS = {
     name: 'Together AI',
     url: 'https://api.together.xyz/v1/chat/completions',
     envKey: 'TOGETHER_API_KEY',
-    models: ['meta-llama/Llama-3-70b-chat-hf', 'mistralai/Mixtral-8x7B-Instruct-v0.1'],
+    models: ['meta-llama/Llama-3-70b-chat-hf', 'mistralai/Mixtral-8x7B-Instruct-v0.1', 'Qwen/Qwen2.5-72B-Instruct-Turbo'],
     defaultModel: 'meta-llama/Llama-3-70b-chat-hf',
     free: true,
     signupUrl: 'https://api.together.xyz',
@@ -62,7 +71,7 @@ const PROVIDERS = {
     models: ['mistralai/Mistral-7B-Instruct-v0.3', 'HuggingFaceH4/zephyr-7b-beta'],
     defaultModel: 'mistralai/Mistral-7B-Instruct-v0.3',
     free: true,
-    signupUrl: 'https://huggingface.co',
+    signupUrl: 'https://huggingface.co/settings/tokens',
     format: 'huggingface',
   },
 };
@@ -74,7 +83,7 @@ async function callOpenAI(provider, messages, model, apiKey) {
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: model || provider.defaultModel, messages, stream: false, max_tokens: 4096 }),
   });
-  if (!res.ok) throw new Error(`${provider.name} API error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`${provider.name} error ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.choices[0].message.content;
 }
@@ -94,7 +103,7 @@ async function callGemini(provider, messages, model, apiKey) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Gemini error ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.candidates[0].content.parts[0].text;
 }
@@ -118,7 +127,7 @@ async function callCohere(provider, messages, model, apiKey) {
       max_tokens: 4096,
     }),
   });
-  if (!res.ok) throw new Error(`Cohere API error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Cohere error ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.text;
 }
@@ -137,7 +146,7 @@ async function callHuggingFace(provider, messages, model, apiKey) {
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ inputs: prompt, parameters: { max_new_tokens: 1024, return_full_text: false } }),
   });
-  if (!res.ok) throw new Error(`Hugging Face API error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`HuggingFace error ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return Array.isArray(data) ? data[0]?.generated_text : data.generated_text;
 }
@@ -172,16 +181,17 @@ app.post('/api/chat', async (req, res) => {
   const key = apiKey || process.env[provider.envKey];
   if (!key) {
     return res.status(400).json({
-      error: `No API key for ${provider.name}. Set ${provider.envKey} env var or pass apiKey in request. Get a free key at ${provider.signupUrl}`,
+      error: `No API key for ${provider.name}. Set ${provider.envKey} env var or enter it in the sidebar. Get a free key at ${provider.signupUrl}`,
     });
   }
 
   try {
     let reply;
-    if (provider.format === 'openai') reply = await callOpenAI(provider, messages, model, key);
+    if (provider.format === 'openai')      reply = await callOpenAI(provider, messages, model, key);
     else if (provider.format === 'gemini') reply = await callGemini(provider, messages, model, key);
     else if (provider.format === 'cohere') reply = await callCohere(provider, messages, model, key);
     else if (provider.format === 'huggingface') reply = await callHuggingFace(provider, messages, model, key);
+    else throw new Error(`Unknown format: ${provider.format}`);
     res.json({ reply, provider: provider.name, model: model || provider.defaultModel });
   } catch (err) {
     console.error(err);
@@ -189,12 +199,22 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// ── Route: GET /api/health ─────────────────────────────────────────────────
+// ── Route: GET /api/health ────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   const configured = Object.entries(PROVIDERS)
     .filter(([, p]) => process.env[p.envKey])
     .map(([id, p]) => ({ id, name: p.name }));
-  res.json({ status: 'ok', version: '1.0.0', configuredProviders: configured });
+  res.json({ status: 'ok', version: '1.1.0', configuredProviders: configured });
 });
 
-app.listen(PORT, () => console.log(`CloudClaw running on http://localhost:${PORT}`));
+// ── SPA fallback: always serve index.html for unknown routes ──────────────
+app.get('*', (req, res) => {
+  res.sendFile(join(__dirname, 'public', 'index.html'));
+});
+
+// ── Start server only when run directly (not imported by Vercel) ──────────
+if (process.env.VERCEL !== '1') {
+  app.listen(PORT, () => console.log(`CloudClaw running on http://localhost:${PORT}`));
+}
+
+export default app;
