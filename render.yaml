@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: cloudclaw
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Add your free API keys here (or in the Render dashboard):
+      # - key: GROQ_API_KEY
+      #   value: your_key_here
+      # - key: GEMINI_API_KEY
+      #   value: your_key_here
+      # - key: COHERE_API_KEY
+      #   value: your_key_here
+      # - key: TOGETHER_API_KEY
+      #   value: your_key_here
+      # - key: HF_API_KEY
+      #   value: your_key_here

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CloudClaw AI</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>" />
+</head>
+<body>
+  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">🐾 CloudClaw</span>
+      <button class="icon-btn" id="newChatBtn" title="New chat">＋</button>
+    </div>
+
+    <div class="sidebar-section">
+      <label>AI Provider</label>
+      <select id="providerSelect"></select>
+    </div>
+
+    <div class="sidebar-section">
+      <label>Model</label>
+      <select id="modelSelect"></select>
+    </div>
+
+    <div class="sidebar-section" id="keySection">
+      <label>API Key <span class="badge free">FREE</span></label>
+      <div class="key-row">
+        <input type="password" id="apiKeyInput" placeholder="Paste your key…" autocomplete="off" />
+        <button class="icon-btn" id="toggleKeyBtn" title="Show/hide">👁</button>
+      </div>
+      <a id="getKeyLink" href="#" target="_blank" class="get-key-link">Get free key →</a>
+    </div>
+
+    <div class="sidebar-section">
+      <label>System Prompt</label>
+      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful.</textarea>
+    </div>
+
+    <div class="sidebar-section">
+      <label>Temperature: <span id="tempVal">0.7</span></label>
+      <input type="range" id="tempRange" min="0" max="2" step="0.1" value="0.7" />
+    </div>
+
+    <div class="sidebar-footer">
+      <div id="statusDot" class="status-dot offline"></div>
+      <span id="statusText">No provider selected</span>
+    </div>
+  </aside>
+
+  <!-- ── Main chat area ───────────────────────────────────────── -->
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
+      <span class="topbar-title">CloudClaw AI Assistant</span>
+      <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
+    </header>
+
+    <div class="messages" id="messages">
+      <div class="welcome">
+        <div class="welcome-icon">🐾</div>
+        <h1>Welcome to CloudClaw</h1>
+        <p>A free, open, cloud-hosted AI assistant powered by the best free AI providers.</p>
+        <div class="provider-cards" id="providerCards"></div>
+        <p class="tip">Select a provider in the sidebar, add your free API key, and start chatting!</p>
+      </div>
+    </div>
+
+    <form class="input-area" id="chatForm">
+      <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach file">📎</button>
+      <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.js,.py,.html,.css,.json,.csv" />
+      <textarea
+        id="userInput"
+        placeholder="Ask anything… (Shift+Enter for new line)"
+        rows="1"
+        autocomplete="off"
+      ></textarea>
+      <button type="submit" class="send-btn" id="sendBtn" title="Send">
+        <span id="sendIcon">➤</span>
+        <span id="loadingIcon" style="display:none">⏳</span>
+      </button>
+    </form>
+
+    <p class="disclaimer">Free AI APIs may have rate limits. CloudClaw never stores your messages or API keys.</p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
