@@ -250,11 +250,14 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 /* ── Ask-all response group ──────────────────────────────────────────── */
 .ask-all-group { border-left: 2px solid var(--accent); padding-left: 10px; }
 
+.sidebar-close { display: none; }
+
 /* ── Responsive ──────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   :root { --sidebar-w: 100vw; }
-  .sidebar { position: fixed; top: 0; left: 0; height: 100%; transform: translateX(-100%); }
+  .sidebar { position: fixed; top: 0; left: 0; height: 100%; transform: translateX(-100%); z-index: 20; }
   .sidebar.open { transform: translateX(0); }
+  .sidebar-close { display: inline-flex; }
   .topbar-title { font-size: 0.85rem; }
   .welcome h1 { font-size: 1.4rem; }
 }

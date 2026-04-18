@@ -594,6 +594,11 @@ sidebarToggle.addEventListener('click', () => {
   sidebar.classList.toggle('open');
 });
 
+document.getElementById('sidebarClose')?.addEventListener('click', () => {
+  sidebar.classList.remove('open');
+  sidebar.classList.add('collapsed');
+});
+
 stopBtn.addEventListener('click', () => {
   if (currentController) currentController.abort();
 });
