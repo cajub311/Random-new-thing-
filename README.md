@@ -1,35 +1,36 @@
-# 🐾 CloudClaw AI
+# 🐾 OpenClaw
 
-**A free, open-source, cloud-hosted AI assistant that works with ZERO setup.**
+**Free, local-first, open-source personal AI assistant.**
+Runs on your own machine with Ollama or LM Studio. Falls back to keyless
+cloud providers so it Just Works even if you haven't installed anything.
+Talks to a real agent that can search the web, create files, draft emails,
+generate images, do math, and remember things about you.
 
-No API keys. No subscriptions. No data stored. Just open the page and start chatting.
-
-CloudClaw is an OpenClaw-inspired simple AI assistant you can deploy for free
-and use to send emails, search the web, and create files — all from a chat UI.
+[![License: MIT](https://img.shields.io/badge/license-MIT-6c63ff.svg)](LICENSE)
+[![Node.js: ≥18](https://img.shields.io/badge/node-%E2%89%A518-339933.svg)](https://nodejs.org)
+[![Local-first](https://img.shields.io/badge/local--first-ollama%20%7C%20lm%20studio-22c55e.svg)](https://ollama.com)
 
 ---
 
-## ✨ Highlights
+## ✨ Why OpenClaw
 
-- **Zero-key default** — ships with the free [Pollinations](https://pollinations.ai) provider. Works immediately, no signup.
-- **Streaming chat** — replies stream token-by-token with a stop button.
-- **🤖 Agent mode** — the AI can use tools to complete real tasks:
-  - `web_search` — search the public web (DuckDuckGo)
-  - `fetch_url` — read a web page
-  - `create_file` — save a text file the user can download
-  - `draft_email` — produce a `mailto:` link to open in your email client
-  - `generate_image` — create an image from a prompt (Pollinations, keyless)
-  - `calculate` — safely evaluate a math expression (sqrt, sin, cos, ^, etc.)
-  - `current_time` — get the current UTC time
-- **Multi-provider** — optional extra keys for Groq, Google Gemini, Cohere, Together AI, Hugging Face.
-- **Auto-fallback** — if one provider fails, the next one answers.
-- **Ask All** — fan out the same question to every configured provider and compare.
-- **Conversation history** — last 30 chats saved in your browser; click to resume.
-- **Slash commands** — `/agent`, `/image`, `/search`, `/file`, `/export`, `/clear`, …
-- **Markdown + code highlighting** via marked, DOMPurify, and highlight.js.
-- **Export** any conversation as a `.md` file.
-- **Nothing stored server-side** — keys and chats stay in your browser's `localStorage`; messages are never persisted on the server.
-- **One-click deploy** — Vercel, Render, or Railway, all free tiers.
+- **100% free to run.** No paid API required. If you have Ollama or LM Studio,
+  OpenClaw uses *your own* LLM — private, offline, unlimited. If you don't,
+  it falls back to a free keyless cloud provider.
+- **Smart agent brain.** ReAct-style system prompt, explicit planning, a
+  `final_answer` tool for clean termination, and long-term memory so it
+  remembers your name, preferences, and ongoing projects across sessions.
+- **Pluggable skills.** One file per tool. Drop a `*.skill.js` in `skills/`,
+  restart, and the LLM can use it. Currently shipped: `web_search`,
+  `fetch_url`, `create_file`, `read_file`, `draft_email`, `generate_image`,
+  `calculate`, `current_time`, `remember`, `recall`, `final_answer`.
+- **Hardened.** Every external URL the agent fetches is checked against an
+  SSRF-blocking resolver (no localhost, no private ranges, no metadata IPs).
+  File writes are sandboxed to a workspace directory.
+- **Streaming UI.** Token-by-token output, stop button, session history,
+  slash commands, markdown export, proper code highlighting.
+- **Optional Telegram bot.** Drop in a bot token, get a Telegram assistant
+  with the same brain.
 
 ---
 
@@ -37,155 +38,224 @@ and use to send emails, search the web, and create files — all from a chat UI.
 
 ```bash
 git clone <this-repo>
-cd cloudclaw
+cd openclaw
 npm install
 npm start
 # open http://localhost:3000
 ```
 
-That's it. No `.env` needed. The first conversation will go through Pollinations
-for free. If you want to add optional providers, copy `.env.example` → `.env`.
+That's it — no `.env` needed. OpenClaw will:
+
+1. Probe `localhost:11434` for **Ollama** and `localhost:1234` for **LM Studio**
+   and auto-connect if it finds one.
+2. If neither is running, use the free keyless **Pollinations** cloud
+   provider so you can still start chatting.
+
+### Running a truly local stack
+
+Install Ollama and pull a tool-capable model:
+
+```bash
+# macOS / Linux
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.1          # 4.7GB, great all-rounder
+# or
+ollama pull qwen2.5:7b        # excellent tool-calling in ≤ 8GB RAM
+```
+
+Start OpenClaw — it will list the model you pulled in the sidebar and use
+it for everything, including agent mode, with zero internet round-trips.
 
 ---
 
-## 🤖 Agent mode
+## 🧠 Architecture
 
-Switch the sidebar toggle from **💬 Chat** to **🤖 Agent** and ask CloudClaw to
-do things like:
+```
+┌─────────────────────┐      ┌───────────────────────────────────┐
+│  Web UI (public/)   │      │   Optional messaging adapters     │
+│  streaming, skills  │      │   adapters/telegram.js            │
+│  panel, memory UI   │      │   (opt-in via TELEGRAM_BOT_TOKEN) │
+└──────────┬──────────┘      └──────────────┬────────────────────┘
+           │ /api/chat/stream, /api/agent   │ POST /api/agent
+           ▼                                ▼
+   ┌──────────────────────────────────────────────────┐
+   │  server.js  —  Express HTTP + SSE streaming      │
+   └──────────────────┬───────────────────────────────┘
+                      ▼
+        ┌─────────────────────────────┐
+        │  lib/brain.js               │   System prompt, tool loop, reflection
+        │  lib/llm.js                 │   OpenAI / Gemini / Cohere / HF adapters
+        │  lib/providers.js           │   Registry with local-first priority
+        │  lib/memory.js              │   Long-term memory (BM25-ish on JSON)
+        │  lib/safe-fetch.js          │   SSRF-blocking fetch wrapper
+        │  lib/logger.js              │   Structured logger w/ request IDs
+        └─────────────────────────────┘
+                      │
+       ┌──────────────┴──────────────┐
+       ▼                             ▼
+  ┌─────────────────┐         ┌─────────────────────┐
+  │  skills/*.js    │         │  LLM backends       │
+  │  auto-loaded    │         │  • Ollama (local)   │
+  │  tools          │         │  • LM Studio (local)│
+  │                 │         │  • llama.cpp (local)│
+  │ web_search      │         │  • Pollinations     │
+  │ fetch_url       │         │  • Groq / Gemini /  │
+  │ create_file     │         │    Together / HF /  │
+  │ read_file       │         │    Cohere           │
+  │ draft_email     │         └─────────────────────┘
+  │ generate_image  │
+  │ calculate       │
+  │ current_time    │
+  │ remember        │
+  │ recall          │
+  │ final_answer    │
+  └─────────────────┘
+```
 
-- *"Search the web for the latest Node.js version and summarize."*
+---
+
+## 🧰 Built-in skills
+
+| Skill | What it does |
+|---|---|
+| `web_search`     | DuckDuckGo HTML scrape — organic results with titles & snippets |
+| `fetch_url`      | Download a URL and strip HTML to plain text. SSRF-guarded. |
+| `create_file`    | Write a text file (up to 1MB) into the workspace |
+| `read_file`      | Read a previously created workspace file |
+| `draft_email`    | Produce a `mailto:` link you can open in your email client |
+| `generate_image` | Free keyless image generation via Pollinations |
+| `calculate`      | Sandboxed math evaluator (`sqrt`, `sin`, `log`, `^`, `pi`, …) |
+| `current_time`   | UTC timestamp |
+| `remember`       | Save a fact to long-term memory with optional tags & importance |
+| `recall`         | BM25-ish search over saved memories |
+| `final_answer`   | Clean exit from the tool loop with the final markdown reply |
+
+Adding a new skill is a single file. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## 🔌 Providers
+
+| Provider | Local? | Key? | Tools? | Notes |
+|---|:---:|:---:|:---:|---|
+| **Ollama**            | ✅ | — | ✅ | Auto-detected on localhost:11434 |
+| **LM Studio**         | ✅ | — | ✅ | Auto-detected on localhost:1234 |
+| **llama.cpp server**  | ✅ | — | ✅ | `LLAMACPP_URL` defaults to :8080 |
+| **Pollinations**      | — | — | ✅ | Keyless cloud, default fallback |
+| **Groq**              | — | ✅ | ✅ | Fastest Llama inference |
+| **Google Gemini**     | — | ✅ | — | Generous free tier |
+| **Together AI**       | — | ✅ | ✅ | Big OSS-model catalog |
+| **Cohere**            | — | ✅ | — | Command R family |
+| **Hugging Face**      | — | ✅ | — | HF Inference API |
+
+Keys go in `.env` or in the browser sidebar (they live in `localStorage`
+and never touch disk on the server).
+
+---
+
+## 🤖 Agent mode in action
+
+Type into the UI or send via the Telegram bot:
+
+- *"Search the web for the latest AI news and summarize the top 3 stories."*
 - *"Create a file called `todo.md` with 5 tasks for tomorrow."*
-- *"Draft a friendly email to support@example.com about a refund."*
-- *"Fetch https://example.com and summarize the page."*
-- *"Generate an image of a cozy cabin in the snowy mountains at sunset."*
+- *"Draft an email to boss@example.com asking about time off."*
+- *"Generate an image of a cozy cabin in snowy mountains."*
 - *"Calculate the monthly payment on a $350,000 30-year mortgage at 6.5%."*
+- *"My name is Sam and I'm working on a game in Godot — remember that."*
+  (next session) *"What engine am I using for my game?"*
 
-The AI chooses which tools to call, CloudClaw runs them server-side, and the
-trace of every tool call + its result is shown inline. Files created by the
-agent appear in the **Agent Files** panel with a download link.
-
-Agent mode requires a provider that supports tool calling. The built-in
-keyless Pollinations provider supports it, as do Groq and Together.
+The agent plans, calls tools, reflects on their output, and streams a clean
+markdown answer. Every step is visible in the tool-call trace UI.
 
 ---
 
-## 🌐 Providers
+## 📡 HTTP API
 
-| Provider | Key needed? | Tool calling | Free tier |
-|---|---|---|---|
-| **Pollinations** | ❌ **No** (default) | ✅ | Unlimited anonymous tier |
-| **Groq** | yes | ✅ | [console.groq.com](https://console.groq.com) |
-| **Google Gemini** | yes | — | [aistudio.google.com](https://aistudio.google.com) |
-| **Cohere** | yes | — | [dashboard.cohere.com](https://dashboard.cohere.com) |
-| **Together AI** | yes | ✅ | [api.together.xyz](https://api.together.xyz) |
-| **Hugging Face** | yes | — | [huggingface.co](https://huggingface.co/settings/tokens) |
+```
+GET    /api/health          → version, skills, configured providers
+GET    /api/providers       → provider catalog (incl. local reachability)
+POST   /api/chat            → one-shot chat completion
+POST   /api/chat/stream     → SSE token streaming
+POST   /api/agent           → tool-calling loop (memory-aware)
+GET    /api/files           → list workspace files
+GET    /api/files/:name     → download a workspace file
+GET    /api/memory          → list long-term memory entries
+POST   /api/memory          → add a memory entry { text, tags, importance }
+DELETE /api/memory/:id      → forget one entry
+DELETE /api/memory          → clear all memory
+```
 
-Keys can be supplied either as environment variables on the server (great for
-a team deployment) **or** pasted directly into the sidebar per-browser (great
-for personal use — the key never leaves `localStorage`).
+Every response carries an `X-Request-Id` header for log correlation.
+
+---
+
+## 💬 Telegram bot
+
+```bash
+# Create a bot via @BotFather on Telegram, get the token.
+export TELEGRAM_BOT_TOKEN=123:abc...
+npm start
+```
+
+OpenClaw launches a long-polling Telegram adapter that talks to the local
+`/api/agent` endpoint. `/start` introduces the bot, `/reset` clears the chat
+history. All other messages go to the agent. Long-term memory persists
+across Telegram chats *and* the web UI.
 
 ---
 
 ## ☁️ Deploy for free
 
-### Vercel (recommended)
-
-1. Push this repo to GitHub.
-2. Go to https://vercel.com → Import.
-3. Click Deploy. (No environment variables are required — Pollinations works
-   without one.)
-4. You get a free `*.vercel.app` URL.
-
-### Render
-
-1. Push this repo to GitHub.
-2. https://render.com → New → Web Service → Connect repo.
-3. Build command `npm install`, Start command `npm start`.
-4. Click Deploy — free `*.onrender.com` URL.
-
-### Railway
+### Vercel
 
 ```bash
-npm install -g @railway/cli
-railway login && railway init && railway up
+npx vercel
 ```
 
-### Hugging Face Spaces
+Works out of the box. `vercel.json` ships with a 60s function duration and
+512MB memory so agent tool chains finish comfortably.
 
-Create a new Space with SDK=Node.js and push this repo. Free `*.hf.space` URL.
+### Render / Railway / Fly.io / a Raspberry Pi
+
+It's a plain Node/Express server. Any Node 18+ host works.
+
+### Docker
+
+(Feel free to contribute a Dockerfile — a minimal one is `FROM node:20-alpine`
+with `npm ci && npm start`.)
 
 ---
 
-## 🏗 How it works
+## 🔐 Security notes
 
-```
-Browser (app.js)
-    │
-    ▼
-CloudClaw Server (Express)
-    │
-    ├── GET  /api/providers     list providers + whether keys are configured
-    ├── POST /api/chat          one-shot chat completion
-    ├── POST /api/chat/stream   SSE-streaming chat (token-by-token)
-    ├── POST /api/agent         tool-calling loop (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time)
-    ├── GET  /api/files         list files created by the agent
-    └── GET  /api/files/:name   download a created file
-         │
-         ├── Pollinations   (keyless, OpenAI-compatible)
-         ├── Groq API       (OpenAI-compatible)
-         ├── Google Gemini
-         ├── Cohere Chat
-         ├── Together AI    (OpenAI-compatible)
-         └── Hugging Face Inference
-```
-
-On a **serverless** deployment (Vercel, Lambda) files are stored under `/tmp`
-and live as long as the warm function instance. On a **persistent** host
-(Render, Railway, a VPS) they're stored in the `workspace/` directory and
-persist until you delete them.
+- `fetch_url` uses `lib/safe-fetch.js`, which resolves the hostname and
+  refuses private/loopback addresses, cloud metadata IPs, and non-http(s)
+  schemes. Redirects are re-validated hop-by-hop.
+- `create_file` sanitizes filenames, caps content at 1MB, and refuses
+  anything that escapes the workspace directory.
+- `calculate` runs inside `new Function` with a strict identifier allowlist
+  (only `Math.*`), never touches `globalThis`.
+- Long-term memory is stored as plain JSON under the workspace directory.
+  Delete that file (or `DELETE /api/memory`) to wipe it.
+- No telemetry. Nothing is sent anywhere except the LLM provider you choose.
 
 ---
 
-## 📡 API reference
+## 🗺 Roadmap ideas
 
-### `POST /api/chat`
+- Vector memory via `nomic-embed-text` through Ollama (drop-in replacement
+  for the BM25 retriever in `lib/memory.js`).
+- Additional adapters: Discord, Slack, WhatsApp (Baileys), Signal, Matrix.
+- Voice I/O with Whisper.cpp + Piper, both free and local.
+- A proper plugin registry (ClawHub-style).
+- Scheduled tasks (cron-like "every morning, summarize my inbox").
+- Sandboxed shell tool (opt-in) for power users.
 
-```json
-{
-  "provider": "pollinations",
-  "model": "openai",
-  "messages": [
-    { "role": "system", "content": "You are a helpful assistant." },
-    { "role": "user", "content": "Hello!" }
-  ]
-}
-```
-
-### `POST /api/agent`
-
-Same body as `/api/chat`. Returns:
-
-```json
-{
-  "reply":    "final answer",
-  "provider": "Pollinations (no key needed)",
-  "model":    "openai",
-  "steps":    3,
-  "trace":    [ { "step": 1, "tool": "web_search", "args": { … }, "result": { … } } ]
-}
-```
-
-### `GET /api/providers`
-Returns every provider, its models, and whether it's usable right now.
-
-### `GET /api/files` / `GET /api/files/:name`
-Lists and downloads files created by the agent's `create_file` tool.
-
-### `GET /api/health`
-`{ status: 'ok', configuredProviders: [ … ] }`.
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
-## License
+## 📜 License
 
-MIT — free to use, fork, and deploy.
+MIT — see [LICENSE](LICENSE).

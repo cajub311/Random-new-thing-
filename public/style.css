@@ -462,3 +462,48 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 .msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 4px 8px; }
 .msg-bubble th { background: var(--surface2); }
 .msg-bubble img { max-width: 100%; border-radius: 8px; }
+
+/* ── v3.0: OpenClaw, local LLMs, memory panel ──────────────────────────── */
+.memory-list { list-style: none; padding: 0; margin: 0; font-size: 13px; max-height: 200px; overflow-y: auto; }
+.memory-list li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  background: var(--surface2);
+  border-left: 3px solid var(--accent2);
+}
+.memory-list li.empty {
+  color: var(--text-muted);
+  font-style: italic;
+  background: none;
+  border-left: none;
+  padding-left: 0;
+}
+.mem-text { display: block; margin-bottom: 4px; line-height: 1.4; }
+.mem-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
+.mem-tag {
+  background: rgba(167,139,250,0.15);
+  color: var(--accent2);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.mem-imp { color: #f59e0b; }
+.mem-del { margin-left: auto; opacity: 0.5; }
+.mem-del:hover { opacity: 1; color: var(--error); }
+
+.provider-card.local {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.provider-card.local.configured {
+  background: rgba(34, 197, 94, 0.08);
+}
+.card-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.memory-list::-webkit-scrollbar { width: 6px; }
+.memory-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }

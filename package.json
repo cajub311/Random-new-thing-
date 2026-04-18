@@ -1,22 +1,36 @@
 {
-  "name": "cloudclaw",
-  "version": "2.1.0",
-  "description": "CloudClaw - Free cloud-hosted AI assistant with multi-provider support",
+  "name": "openclaw",
+  "version": "3.0.0",
+  "description": "OpenClaw — free, local-first, open-source personal AI assistant. Runs on Ollama/LM Studio with free cloud fallbacks, agent tools (web, files, email, images, math, memory), Telegram adapter.",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev":   "node --watch server.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.18.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "node-fetch": "^3.3.2"
+    "express": "^4.18.2"
   },
-  "keywords": ["ai", "chatbot", "free", "cloud", "assistant"],
-  "license": "MIT"
+  "keywords": [
+    "ai",
+    "assistant",
+    "agent",
+    "local-llm",
+    "ollama",
+    "lm-studio",
+    "openclaw",
+    "self-hosted",
+    "open-source",
+    "free"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cajub311/Random-new-thing-"
+  }
 }

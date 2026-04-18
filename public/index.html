@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CloudClaw AI</title>
+  <title>OpenClaw — Free, Local-First AI Assistant</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>" />
@@ -15,7 +15,7 @@
   <!-- ── Sidebar ──────────────────────────────────────────────── -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <span class="logo">🐾 CloudClaw</span>
+      <span class="logo">🐾 OpenClaw</span>
       <button class="icon-btn" id="newChatBtn" title="New chat">＋</button>
     </div>
 
@@ -63,6 +63,15 @@
       <ul id="filesList" class="files-list"><li class="empty">No files yet</li></ul>
     </div>
 
+    <div class="sidebar-section" id="memorySection">
+      <label>
+        Long-term Memory
+        <button class="icon-btn mini" id="refreshMemoryBtn" title="Refresh">⟳</button>
+        <button class="icon-btn mini" id="clearMemoryBtn" title="Clear all memory">✕</button>
+      </label>
+      <ul id="memoryList" class="memory-list"><li class="empty">No memories yet</li></ul>
+    </div>
+
     <div class="sidebar-section">
       <label>Temperature: <span id="tempVal">0.7</span></label>
       <input type="range" id="tempRange" min="0" max="2" step="0.1" value="0.7" />
@@ -78,7 +87,7 @@
   <main class="main">
     <header class="topbar">
       <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
-      <span class="topbar-title">CloudClaw AI</span>
+      <span class="topbar-title">OpenClaw</span>
       <span class="provider-pill" id="activePill"></span>
       <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
     </header>
@@ -86,8 +95,8 @@
     <div class="messages" id="messages">
       <div class="welcome">
         <div class="welcome-icon">🐾</div>
-        <h1>Welcome to CloudClaw</h1>
-        <p>Free, open AI — powered by the best no-cost API providers.</p>
+        <h1>OpenClaw</h1>
+        <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
         <div class="provider-cards" id="providerCards"></div>
         <div class="quick-prompts">
           <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
@@ -97,7 +106,7 @@
           <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
           <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
         </div>
-        <p class="tip" id="welcomeTip"><strong>🎉 No API key required!</strong> CloudClaw ships with the free keyless Pollinations provider — just start chatting. Switch to <strong>Agent</strong> mode to let the AI search the web, create files, and draft emails for you.</p>
+        <p class="tip" id="welcomeTip"><strong>🎉 No API key required.</strong> If you have <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> running locally, OpenClaw will auto-connect and keep everything private on your machine. Otherwise the free keyless Pollinations provider kicks in. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
       </div>
     </div>
 

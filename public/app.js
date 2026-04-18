@@ -12,8 +12,8 @@ let currentController = null;    // AbortController for in-flight requests
 let sessions    = [];            // [{id, title, mode, messages, updated}]
 let currentSessionId = null;
 
-// Pollinations is the keyless default, so fallback order puts it first.
-const PROVIDER_ORDER = ['pollinations', 'groq', 'gemini', 'cohere', 'together', 'huggingface'];
+// Local LLMs first, then keyless cloud, then key-based cloud.
+const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -49,6 +49,9 @@ const keySection     = document.getElementById('keySection');
 const sessionsList   = document.getElementById('sessionsList');
 const exportChatBtn  = document.getElementById('exportChatBtn');
 const slashMenu      = document.getElementById('slashMenu');
+const memoryList     = document.getElementById('memoryList');
+const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
+const clearMemoryBtn = document.getElementById('clearMemoryBtn');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -101,10 +104,14 @@ function buildProviderUI() {
     providerSelect.appendChild(opt);
 
     const card = document.createElement('div');
-    card.className = 'provider-card' + (p.configured ? ' configured' : '');
+    card.className = 'provider-card' + (p.configured ? ' configured' : '') + (p.local ? ' local' : '');
+    const tag = p.local
+      ? (p.configured ? '🖥️ Local • Connected' : '🖥️ Local • Not running')
+      : (p.configured ? '✓ Connected' : 'FREE tier');
     card.innerHTML = `
       <div class="card-name">${escapeHtml(p.name)}</div>
-      <div class="card-tag">${p.configured ? '✓ Connected' : 'FREE tier'}</div>`;
+      <div class="card-tag">${tag}</div>
+      ${p.description ? `<div class="card-desc">${escapeHtml(p.description)}</div>` : ''}`;
     card.addEventListener('click', () => {
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
@@ -790,6 +797,18 @@ function renderTraceItem(item) {
     summary = `<div class="trace-image"><img src="${escapeAttr(result.image_url)}" alt="${escapeAttr(result.prompt || '')}" loading="lazy" /><div class="trace-snippet">${escapeHtml(result.prompt || '')}</div></div>`;
   } else if (tool === 'calculate' && typeof result?.result === 'number') {
     summary = `<div class="trace-snippet">Result: <strong>${escapeHtml(String(result.result))}</strong></div>`;
+  } else if (tool === 'remember' && result?.id) {
+    summary = `<div class="trace-snippet">💾 Saved to memory: <em>${escapeHtml(result.text)}</em></div>`;
+  } else if (tool === 'recall' && result?.matches) {
+    summary = result.matches.length
+      ? `<ul class="trace-results">${result.matches.map(m => `<li><em>${escapeHtml(m.text)}</em></li>`).join('')}</ul>`
+      : `<div class="trace-snippet">No relevant memories found.</div>`;
+  } else if (tool === 'final_answer') {
+    summary = ''; // don't render - the reply itself is shown below
+  } else if (tool === 'read_file' && result?.filename) {
+    summary = `<div class="trace-snippet">📖 Read ${escapeHtml(result.filename)} (${result.length} chars)</div>`;
+  } else if (tool === 'current_time' && result?.iso) {
+    summary = `<div class="trace-snippet">${escapeHtml(result.utc || result.iso)}</div>`;
   } else if (result?.error) {
     summary = `<div class="trace-error">Error: ${escapeHtml(result.error)}</div>`;
   }
@@ -819,6 +838,44 @@ async function loadFiles() {
 }
 
 if (refreshFilesBtn) refreshFilesBtn.addEventListener('click', loadFiles);
+
+// ── Memory panel ──────────────────────────────────────────────────────────
+async function loadMemory() {
+  if (!memoryList) return;
+  try {
+    const res = await fetch(`${API}/api/memory`);
+    const data = await res.json();
+    if (!data.entries || data.entries.length === 0) {
+      memoryList.innerHTML = '<li class="empty">No memories yet</li>';
+      return;
+    }
+    memoryList.innerHTML = data.entries.slice(0, 40).map(e => `
+      <li data-id="${escapeAttr(e.id)}">
+        <span class="mem-text">${escapeHtml(e.text)}</span>
+        <div class="mem-meta">
+          ${(e.tags || []).map(t => `<span class="mem-tag">${escapeHtml(t)}</span>`).join('')}
+          ${e.importance >= 3 ? '<span class="mem-imp">★</span>' : ''}
+          <button class="icon-btn mini mem-del" data-del="${escapeAttr(e.id)}" title="Forget">×</button>
+        </div>
+      </li>`).join('');
+  } catch {
+    memoryList.innerHTML = '<li class="empty">Could not load</li>';
+  }
+}
+
+memoryList?.addEventListener('click', async e => {
+  const del = e.target.closest('.mem-del');
+  if (!del) return;
+  await fetch(`${API}/api/memory/${encodeURIComponent(del.dataset.del)}`, { method: 'DELETE' });
+  loadMemory();
+});
+
+refreshMemoryBtn?.addEventListener('click', loadMemory);
+clearMemoryBtn?.addEventListener('click', async () => {
+  if (!confirm('Forget everything in long-term memory?')) return;
+  await fetch(`${API}/api/memory`, { method: 'DELETE' });
+  loadMemory();
+});
 
 // ── Quick prompts on the welcome screen ────────────────────────────────────
 document.addEventListener('click', e => {
@@ -998,4 +1055,17 @@ systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', s
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-init().then(() => { loadFiles(); });
+init().then(() => { loadFiles(); loadMemory(); });
+// Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
+setInterval(async () => {
+  try {
+    const res = await fetch(`${API}/api/providers`);
+    const next = await res.json();
+    let changed = false;
+    for (const [id, p] of Object.entries(next)) {
+      if (providers[id]?.configured !== p.configured) changed = true;
+    }
+    providers = next;
+    if (changed) { buildProviderUI(); updateStatus(); }
+  } catch { /* ignore */ }
+}, 30_000);
