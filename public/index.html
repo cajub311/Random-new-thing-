@@ -18,10 +18,11 @@
     <div class="sidebar-section">
       <label>Chat Mode</label>
       <div class="mode-toggle" id="modeToggle">
-        <button class="mode-btn active" data-mode="auto" title="Auto-selects and falls back through providers">⚡ Auto</button>
+        <button class="mode-btn active" data-mode="auto" title="Chat with auto-fallback between providers">💬 Chat</button>
+        <button class="mode-btn" data-mode="agent" title="AI assistant with tools: web search, file creation, email drafts">🤖 Agent</button>
         <button class="mode-btn" data-mode="ask-all" title="Ask all configured providers at once">✦ Ask All</button>
       </div>
-      <span class="mode-hint" id="modeHint">Tries providers in order, auto-fallback on failure</span>
+      <span class="mode-hint" id="modeHint">Chat mode — tries providers in order, auto-fallback on failure</span>
     </div>
 
     <div class="sidebar-section">
@@ -45,7 +46,12 @@
 
     <div class="sidebar-section">
       <label>System Prompt</label>
-      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful.</textarea>
+      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, current_time) to complete tasks.</textarea>
+    </div>
+
+    <div class="sidebar-section" id="filesSection">
+      <label>Agent Files <button class="icon-btn mini" id="refreshFilesBtn" title="Refresh">⟳</button></label>
+      <ul id="filesList" class="files-list"><li class="empty">No files yet</li></ul>
     </div>
 
     <div class="sidebar-section">
@@ -74,7 +80,13 @@
         <h1>Welcome to CloudClaw</h1>
         <p>Free, open AI — powered by the best no-cost API providers.</p>
         <div class="provider-cards" id="providerCards"></div>
-        <p class="tip" id="welcomeTip">Add at least one free API key in the sidebar and start chatting — CloudClaw handles the rest.</p>
+        <div class="quick-prompts">
+          <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
+          <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
+          <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
+          <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+        </div>
+        <p class="tip" id="welcomeTip"><strong>🎉 No API key required!</strong> CloudClaw ships with the free keyless Pollinations provider — just start chatting. Switch to <strong>Agent</strong> mode to let the AI search the web, create files, and draft emails for you.</p>
       </div>
     </div>
 

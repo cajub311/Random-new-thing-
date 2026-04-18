@@ -6,11 +6,12 @@ const API = '';  // same-origin; set full URL if backend is separate
 let providers  = {};
 let messages   = [];        // {role, content}[] — conversation history
 let isLoading  = false;
-let chatMode   = 'auto';    // 'auto' | 'ask-all'
+let chatMode   = 'auto';    // 'auto' | 'agent' | 'ask-all'
 let pendingFileText = null;
 
-// Provider priority for auto-fallback
-const PROVIDER_ORDER = ['groq', 'grok', 'gemini', 'cohere', 'together', 'huggingface'];
+// Provider priority for auto-fallback. Pollinations is first because it
+// requires no API key, so CloudClaw works out of the box.
+const PROVIDER_ORDER = ['pollinations', 'groq', 'gemini', 'cohere', 'together', 'huggingface'];
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -39,6 +40,9 @@ const fileInput      = document.getElementById('fileInput');
 const modeToggle     = document.getElementById('modeToggle');
 const modeHint       = document.getElementById('modeHint');
 const activePill     = document.getElementById('activePill');
+const filesList      = document.getElementById('filesList');
+const refreshFilesBtn= document.getElementById('refreshFilesBtn');
+const keySection     = document.getElementById('keySection');
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -102,10 +106,16 @@ providerSelect.addEventListener('change', () => {
     modelSelect.appendChild(opt);
   }
 
-  const savedKey = localStorage.getItem(`cc_key_${id}`) || '';
-  apiKeyInput.value = savedKey;
-  getKeyLink.href = p.signupUrl;
-  getKeyLink.textContent = `Get free ${p.name} key →`;
+  if (p.keyless) {
+    keySection.style.display = 'none';
+    apiKeyInput.value = '';
+  } else {
+    keySection.style.display = '';
+    const savedKey = localStorage.getItem(`cc_key_${id}`) || '';
+    apiKeyInput.value = savedKey;
+    getKeyLink.href = p.signupUrl;
+    getKeyLink.textContent = `Get free ${p.name} key →`;
+  }
 
   updateStatus();
   localStorage.setItem('cc_provider', id);
@@ -123,29 +133,38 @@ apiKeyInput.addEventListener('input', () => {
 });
 
 // ── Mode toggle ────────────────────────────────────────────────────────────
+const MODE_HINTS = {
+  'auto':    'Chat mode — tries providers in order, auto-fallback on failure',
+  'agent':   'Agent mode — the AI can search the web, create files, and draft emails',
+  'ask-all': 'Sends to all configured providers simultaneously',
+};
 modeToggle.addEventListener('click', e => {
   const btn = e.target.closest('.mode-btn');
   if (!btn) return;
-  chatMode = btn.dataset.mode;
-  modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
-  modeHint.textContent = chatMode === 'auto'
-    ? 'Tries providers in order, auto-fallback on failure'
-    : 'Sends to all configured providers simultaneously';
-  updateStatus();
-  localStorage.setItem('cc_mode', chatMode);
+  setChatMode(btn.dataset.mode);
 });
+function setChatMode(mode) {
+  chatMode = mode;
+  modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  modeHint.textContent = MODE_HINTS[mode] || '';
+  updateStatus();
+  localStorage.setItem('cc_mode', mode);
+  if (mode === 'agent') loadFiles();
+}
 
 // ── Available providers helper ─────────────────────────────────────────────
-function getAvailableProviders() {
-  // Returns [{id, key}] in priority order for providers that have a key available
+function getAvailableProviders({ toolsOnly = false } = {}) {
+  // Returns [{id, key}] in priority order for providers that are usable.
   const preferred = providerSelect.value;
   const ordered = [preferred, ...PROVIDER_ORDER.filter(id => id !== preferred)];
   return ordered
     .filter(id => providers[id])
+    .filter(id => !toolsOnly || providers[id].supportsTools)
     .map(id => {
+      const p = providers[id];
+      if (p.keyless) return { id, key: '' };
       const key = localStorage.getItem(`cc_key_${id}`) || '';
-      const configured = providers[id].configured;  // set by server env var
-      if (key || configured) return { id, key };
+      if (key || p.configured) return { id, key };
       return null;
     })
     .filter(Boolean);
@@ -153,9 +172,13 @@ function getAvailableProviders() {
 
 // ── Status helpers ─────────────────────────────────────────────────────────
 function updateStatus() {
-  const available = getAvailableProviders();
+  const needsTools = chatMode === 'agent';
+  const available = getAvailableProviders({ toolsOnly: needsTools });
   if (available.length === 0) {
-    setStatus('offline', 'No keys configured');
+    const msg = needsTools
+      ? 'Agent mode needs a tool-capable provider'
+      : 'No keys configured';
+    setStatus('offline', msg);
     activePill.textContent = '';
     activePill.className = 'provider-pill';
     return;
@@ -167,9 +190,12 @@ function updateStatus() {
   } else {
     const first = available[0];
     const name = providers[first.id].name;
-    const extra = available.length > 1 ? ` +${available.length - 1} fallback${available.length > 2 ? 's' : ''}` : '';
-    setStatus('online', `${name}${extra}`);
-    activePill.textContent = name;
+    const prefix = chatMode === 'agent' ? '🤖 ' : '';
+    const extra = available.length > 1 && chatMode !== 'agent'
+      ? ` +${available.length - 1} fallback${available.length > 2 ? 's' : ''}`
+      : '';
+    setStatus('online', `${prefix}${name}${extra}`);
+    activePill.textContent = prefix + name;
     activePill.className = 'provider-pill online';
   }
 }
@@ -235,6 +261,53 @@ async function sendAuto(msgs) {
   setStatus('error', 'All providers failed');
 }
 
+// ── Agent mode: tool-calling loop on the server ────────────────────────────
+async function sendAgent(msgs) {
+  const available = getAvailableProviders({ toolsOnly: true });
+  if (available.length === 0) {
+    appendMessage('assistant', 'Agent mode needs a tool-capable provider. Pollinations (no key required) is enabled by default — make sure it is selected.', true);
+    setLoading(false);
+    return;
+  }
+  const { id, key } = available[0];
+  const name = providers[id].name;
+  const typingId = appendTyping(`${name} (Agent)`);
+
+  try {
+    const res = await fetch(`${API}/api/agent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: id,
+        model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
+        apiKey: key || undefined,
+        messages: [
+          { role: 'system', content: systemPrompt.value || 'You are a helpful assistant with tools.' },
+          ...msgs,
+        ],
+        maxSteps: 6,
+      }),
+    });
+    const data = await res.json();
+    removeTyping(typingId);
+    if (!res.ok || data.error) {
+      appendMessage('assistant', `Agent error: ${data.error || res.statusText}`, true, id);
+      setStatus('error', 'Agent failed');
+      return;
+    }
+    appendAgentMessage(id, data);
+    messages.push({ role: 'assistant', content: data.reply || '' });
+    setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
+    activePill.textContent = `🤖 ${name}`;
+    activePill.className = 'provider-pill online';
+    loadFiles();
+  } catch (err) {
+    removeTyping(typingId);
+    appendMessage('assistant', `Agent error: ${err.message}`, true);
+    setStatus('error', 'Agent failed');
+  }
+}
+
 // ── Ask All mode: fan out, show each response with badge ──────────────────
 async function sendAskAll(msgs) {
   const available = getAvailableProviders();
@@ -287,6 +360,8 @@ chatForm.addEventListener('submit', async e => {
 
   if (chatMode === 'ask-all') {
     await sendAskAll([...messages]);
+  } else if (chatMode === 'agent') {
+    await sendAgent([...messages]);
   } else {
     await sendAuto([...messages]);
   }
@@ -407,6 +482,105 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
   return div;
 }
 
+function appendAgentMessage(providerId, data) {
+  const div = document.createElement('div');
+  div.className = 'message assistant';
+  const name = providers[providerId]?.name || 'AI';
+  const trace = data.trace || [];
+  const traceHtml = trace.length
+    ? `<details class="trace" open>
+        <summary>🛠️ ${trace.length} tool call${trace.length === 1 ? '' : 's'}</summary>
+        ${trace.map(renderTraceItem).join('')}
+       </details>`
+    : '';
+  div.innerHTML = `
+    <div class="msg-meta">
+      <span class="msg-avatar">🤖</span>
+      <strong>${name}</strong>
+      <span class="agent-badge">agent</span>
+      <span>${timestamp()}</span>
+    </div>
+    ${traceHtml}
+    <div class="msg-bubble">${renderMarkdown(data.reply || '(no reply)')}</div>
+    <div class="msg-actions">
+      <button class="msg-action-btn copy-btn">Copy</button>
+    </div>`;
+
+  div.querySelector('.copy-btn')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(data.reply || '');
+    const btn = div.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { if (btn) btn.textContent = 'Copy'; }, 2000);
+  });
+
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+function renderTraceItem(item) {
+  const { tool, args, result, step } = item;
+  const argStr = (() => {
+    try { return JSON.stringify(args, null, 2); } catch { return String(args); }
+  })();
+  let summary = '';
+  if (tool === 'web_search' && result?.results?.length) {
+    summary = `<ul class="trace-results">${result.results.map(r =>
+      `<li><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a><div class="trace-snippet">${escapeHtml(r.snippet || '')}</div></li>`
+    ).join('')}</ul>`;
+  } else if (tool === 'fetch_url') {
+    summary = `<div class="trace-snippet">Fetched ${escapeHtml(result?.url || '')} (${result?.length || 0} chars)</div>`;
+  } else if (tool === 'create_file' && result?.download_url) {
+    summary = `<div class="trace-file">📄 <a href="${escapeAttr(result.download_url)}" download>${escapeHtml(result.filename)}</a> (${result.bytes} bytes)</div>`;
+  } else if (tool === 'draft_email' && result?.mailto_link) {
+    summary = `<div class="trace-file">✉️ <a href="${escapeAttr(result.mailto_link)}">Open draft to ${escapeHtml(result.to)}</a></div>`;
+  } else if (result?.error) {
+    summary = `<div class="trace-error">Error: ${escapeHtml(result.error)}</div>`;
+  }
+  return `
+    <div class="trace-item">
+      <div class="trace-head">Step ${step}: <code>${escapeHtml(tool)}</code></div>
+      <pre class="trace-args">${escapeHtml(argStr)}</pre>
+      ${summary}
+    </div>`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+async function loadFiles() {
+  if (!filesList) return;
+  try {
+    const res = await fetch(`${API}/api/files`);
+    const data = await res.json();
+    if (!data.files || data.files.length === 0) {
+      filesList.innerHTML = '<li class="empty">No files yet</li>';
+      return;
+    }
+    filesList.innerHTML = data.files.map(f =>
+      `<li><a href="${escapeAttr(f.url)}" download>${escapeHtml(f.name)}</a> <span class="file-size">${f.bytes}B</span></li>`
+    ).join('');
+  } catch {
+    filesList.innerHTML = '<li class="empty">Could not load</li>';
+  }
+}
+
+if (refreshFilesBtn) refreshFilesBtn.addEventListener('click', loadFiles);
+
+// ── Quick prompts on the welcome screen ────────────────────────────────────
+document.addEventListener('click', e => {
+  const qp = e.target.closest('.quick-prompt');
+  if (!qp) return;
+  const mode = qp.dataset.mode;
+  const prompt = qp.dataset.prompt;
+  if (mode) setChatMode(mode);
+  userInput.value = prompt || '';
+  userInput.focus();
+  userInput.dispatchEvent(new Event('input'));
+});
+
 function appendTyping(providerName = 'AI') {
   const id = 'typing-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   const div = document.createElement('div');
@@ -487,10 +661,10 @@ function loadSettings() {
   const temp = localStorage.getItem('cc_temp');
   if (temp) { tempRange.value = temp; tempVal.textContent = temp; }
   const mode = localStorage.getItem('cc_mode');
-  if (mode === 'ask-all') {
-    chatMode = 'ask-all';
-    modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'ask-all'));
-    modeHint.textContent = 'Sends to all configured providers simultaneously';
+  if (mode && ['auto', 'agent', 'ask-all'].includes(mode)) {
+    chatMode = mode;
+    modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    modeHint.textContent = MODE_HINTS[mode] || '';
   }
 }
 
@@ -498,4 +672,4 @@ systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', s
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-init();
+init().then(() => { loadFiles(); });
