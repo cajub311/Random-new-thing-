@@ -12,17 +12,23 @@ and use to send emails, search the web, and create files — all from a chat UI.
 ## ✨ Highlights
 
 - **Zero-key default** — ships with the free [Pollinations](https://pollinations.ai) provider. Works immediately, no signup.
+- **Streaming chat** — replies stream token-by-token with a stop button.
 - **🤖 Agent mode** — the AI can use tools to complete real tasks:
   - `web_search` — search the public web (DuckDuckGo)
   - `fetch_url` — read a web page
   - `create_file` — save a text file the user can download
   - `draft_email` — produce a `mailto:` link to open in your email client
+  - `generate_image` — create an image from a prompt (Pollinations, keyless)
+  - `calculate` — safely evaluate a math expression (sqrt, sin, cos, ^, etc.)
   - `current_time` — get the current UTC time
 - **Multi-provider** — optional extra keys for Groq, Google Gemini, Cohere, Together AI, Hugging Face.
 - **Auto-fallback** — if one provider fails, the next one answers.
 - **Ask All** — fan out the same question to every configured provider and compare.
-- **Beautiful chat UI** — markdown, code blocks, copy buttons, file attachments, tool-call trace.
-- **Nothing stored** — keys stay in your browser's `localStorage`; messages are never persisted.
+- **Conversation history** — last 30 chats saved in your browser; click to resume.
+- **Slash commands** — `/agent`, `/image`, `/search`, `/file`, `/export`, `/clear`, …
+- **Markdown + code highlighting** via marked, DOMPurify, and highlight.js.
+- **Export** any conversation as a `.md` file.
+- **Nothing stored server-side** — keys and chats stay in your browser's `localStorage`; messages are never persisted on the server.
 - **One-click deploy** — Vercel, Render, or Railway, all free tiers.
 
 ---
@@ -51,6 +57,8 @@ do things like:
 - *"Create a file called `todo.md` with 5 tasks for tomorrow."*
 - *"Draft a friendly email to support@example.com about a refund."*
 - *"Fetch https://example.com and summarize the page."*
+- *"Generate an image of a cozy cabin in the snowy mountains at sunset."*
+- *"Calculate the monthly payment on a $350,000 30-year mortgage at 6.5%."*
 
 The AI chooses which tools to call, CloudClaw runs them server-side, and the
 trace of every tool call + its result is shown inline. Files created by the
@@ -117,8 +125,9 @@ Browser (app.js)
 CloudClaw Server (Express)
     │
     ├── GET  /api/providers     list providers + whether keys are configured
-    ├── POST /api/chat          one-shot chat completion (auto-fallback on frontend)
-    ├── POST /api/agent         tool-calling loop (web_search, fetch_url, create_file, draft_email…)
+    ├── POST /api/chat          one-shot chat completion
+    ├── POST /api/chat/stream   SSE-streaming chat (token-by-token)
+    ├── POST /api/agent         tool-calling loop (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time)
     ├── GET  /api/files         list files created by the agent
     └── GET  /api/files/:name   download a created file
          │

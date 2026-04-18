@@ -226,6 +226,37 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'generate_image',
+      description: 'Generate an image from a text prompt using a free keyless service (Pollinations). Returns a URL pointing at the image and saves a reference in the workspace.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'Detailed description of the image to generate' },
+          width:  { type: 'integer', description: 'Width in pixels (default 768)' },
+          height: { type: 'integer', description: 'Height in pixels (default 768)' },
+          seed:   { type: 'integer', description: 'Optional random seed for reproducibility' },
+        },
+        required: ['prompt'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'calculate',
+      description: 'Evaluate a math expression and return the numeric result. Use for any numeric computation to avoid arithmetic mistakes. Supports +, -, *, /, %, **, parentheses, and standard Math.* functions (sqrt, sin, cos, log, etc).',
+      parameters: {
+        type: 'object',
+        properties: {
+          expression: { type: 'string', description: 'The math expression, e.g. "sqrt(2)*3 + 5**2"' },
+        },
+        required: ['expression'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'fetch_url',
       description: 'Fetch a public web page and return its text content (HTML tags stripped). Use to read a page from a web_search result.',
       parameters: {
@@ -371,12 +402,64 @@ function toolCurrentTime() {
   };
 }
 
+async function toolGenerateImage({ prompt, width = 768, height = 768, seed }) {
+  const w = Math.min(Math.max(64, width | 0), 2048);
+  const h = Math.min(Math.max(64, height | 0), 2048);
+  const params = new URLSearchParams({ width: String(w), height: String(h), nologo: 'true' });
+  if (Number.isInteger(seed)) params.set('seed', String(seed));
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params}`;
+  return {
+    prompt,
+    width: w,
+    height: h,
+    seed: Number.isInteger(seed) ? seed : null,
+    image_url: url,
+    note: 'Image URL is a live service — opens directly in any browser or <img> tag.',
+  };
+}
+
+// Safe-ish math evaluator. We allow a tight whitelist of characters and then
+// expose just the Math object via Function. Anything that tries to access a
+// global or an identifier other than "Math" is rejected.
+function toolCalculate({ expression }) {
+  const expr = String(expression || '').trim();
+  if (!expr) return { error: 'empty expression' };
+  if (expr.length > 200) return { error: 'expression too long' };
+  if (!/^[-+*/%^().,0-9a-zA-Z_\s]+$/.test(expr)) {
+    return { error: 'only numbers, operators, parentheses, and identifiers allowed' };
+  }
+  // Reject any identifier that is not a Math member.
+  const ids = expr.match(/[a-zA-Z_][a-zA-Z0-9_]*/g) || [];
+  const allowed = new Set(['Math', ...Object.getOwnPropertyNames(Math), 'e', 'pi']);
+  for (const id of ids) {
+    if (!allowed.has(id)) return { error: `disallowed identifier: ${id}` };
+  }
+  try {
+    const normalized = expr
+      .replace(/\^/g, '**')
+      .replace(/\bpi\b/g, 'Math.PI')
+      .replace(/\be\b/g, 'Math.E')
+      .replace(/\b(sqrt|cbrt|sin|cos|tan|asin|acos|atan|atan2|exp|log|log2|log10|pow|abs|round|floor|ceil|trunc|sign|min|max|hypot)\(/g, 'Math.$1(');
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(`"use strict"; return (${normalized});`);
+    const value = fn();
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return { error: 'non-numeric or non-finite result' };
+    }
+    return { expression: expr, result: value };
+  } catch (e) {
+    return { error: String(e.message || e) };
+  }
+}
+
 const TOOL_IMPLS = {
-  web_search:   toolWebSearch,
-  fetch_url:    toolFetchUrl,
-  create_file:  toolCreateFile,
-  draft_email:  toolDraftEmail,
-  current_time: toolCurrentTime,
+  web_search:     toolWebSearch,
+  fetch_url:      toolFetchUrl,
+  create_file:    toolCreateFile,
+  draft_email:    toolDraftEmail,
+  current_time:   toolCurrentTime,
+  generate_image: toolGenerateImage,
+  calculate:      toolCalculate,
 };
 
 async function runTool(name, argsJson) {
@@ -409,6 +492,103 @@ app.get('/api/providers', (req, res) => {
     };
   }
   res.json(result);
+});
+
+// ── Route: POST /api/chat/stream ──────────────────────────────────────────
+// Server-Sent Events endpoint. Streams plain text deltas to the client for a
+// natural typing effect. Only works for OpenAI-compatible providers.
+app.post('/api/chat/stream', async (req, res) => {
+  const { provider: providerId = 'pollinations', model, messages, apiKey } = req.body;
+
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages array is required' });
+  }
+  const provider = PROVIDERS[providerId];
+  if (!provider) return res.status(400).json({ error: `Unknown provider: ${providerId}` });
+
+  const key = provider.keyless ? null : (apiKey || (provider.envKey && process.env[provider.envKey]));
+  if (!provider.keyless && !key) {
+    return res.status(400).json({ error: `No API key for ${provider.name}.` });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Gemini/Cohere/HF don't have OpenAI-compatible streaming here — fall back to
+  // a single-shot call and emit the whole reply in one "delta" event.
+  if (provider.format !== 'openai') {
+    try {
+      const msg = await chatCompletion(provider, messages, model, key);
+      send('delta', { content: msg.content || '' });
+      send('done', { provider: provider.name, model: model || provider.defaultModel });
+    } catch (err) {
+      send('error', { message: err.message });
+    }
+    return res.end();
+  }
+
+  const upstream = await fetch(provider.url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
+    },
+    body: JSON.stringify({
+      model: model || provider.defaultModel,
+      messages,
+      stream: true,
+      max_tokens: 4096,
+    }),
+  }).catch(e => ({ ok: false, error: e }));
+
+  if (!upstream || !upstream.ok || !upstream.body) {
+    const msg = upstream?.error?.message || `upstream status ${upstream?.status}`;
+    send('error', { message: msg });
+    return res.end();
+  }
+
+  // Relay OpenAI-style SSE as simple `delta` events with just the text.
+  const decoder = new TextDecoder();
+  let buf = '';
+  let closed = false;
+
+  req.on('close', () => { closed = true; try { upstream.body.cancel?.(); } catch {} });
+
+  try {
+    for await (const chunk of upstream.body) {
+      if (closed) break;
+      buf += decoder.decode(chunk, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const raw = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 2);
+        if (!raw) continue;
+        // Each event block may have multiple "data:" lines.
+        for (const line of raw.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') { send('done', { provider: provider.name, model: model || provider.defaultModel }); return res.end(); }
+          try {
+            const obj = JSON.parse(payload);
+            const delta = obj.choices?.[0]?.delta?.content;
+            if (delta) send('delta', { content: delta });
+          } catch { /* ignore malformed chunk */ }
+        }
+      }
+    }
+    send('done', { provider: provider.name, model: model || provider.defaultModel });
+  } catch (err) {
+    send('error', { message: err.message });
+  }
+  res.end();
 });
 
 // ── Route: POST /api/chat ─────────────────────────────────────────────────
@@ -554,7 +734,7 @@ app.get('/api/health', (req, res) => {
   const configured = Object.entries(PROVIDERS)
     .filter(([, p]) => p.keyless || (p.envKey && process.env[p.envKey]))
     .map(([id, p]) => ({ id, name: p.name, keyless: !!p.keyless }));
-  res.json({ status: 'ok', version: '2.0.0', configuredProviders: configured });
+  res.json({ status: 'ok', version: '2.1.0', configuredProviders: configured });
 });
 
 // ── SPA fallback ──────────────────────────────────────────────────────────

@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CloudClaw AI</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>" />
+  <script src="https://cdn.jsdelivr.net/npm/marked@14.1.3/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/common.min.js"></script>
 </head>
 <body>
   <!-- ── Sidebar ──────────────────────────────────────────────── -->
@@ -13,6 +17,11 @@
     <div class="sidebar-header">
       <span class="logo">🐾 CloudClaw</span>
       <button class="icon-btn" id="newChatBtn" title="New chat">＋</button>
+    </div>
+
+    <div class="sidebar-section" id="sessionsSection">
+      <label>Conversations <button class="icon-btn mini" id="exportChatBtn" title="Export current chat as markdown">↓</button></label>
+      <ul id="sessionsList" class="sessions-list"></ul>
     </div>
 
     <div class="sidebar-section">
@@ -46,7 +55,7 @@
 
     <div class="sidebar-section">
       <label>System Prompt</label>
-      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, current_time) to complete tasks.</textarea>
+      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time) to complete tasks.</textarea>
     </div>
 
     <div class="sidebar-section" id="filesSection">
@@ -84,6 +93,8 @@
           <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
           <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
           <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
+          <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
+          <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
           <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
         </div>
         <p class="tip" id="welcomeTip"><strong>🎉 No API key required!</strong> CloudClaw ships with the free keyless Pollinations provider — just start chatting. Switch to <strong>Agent</strong> mode to let the AI search the web, create files, and draft emails for you.</p>
@@ -95,10 +106,12 @@
       <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.js,.py,.html,.css,.json,.csv" />
       <textarea
         id="userInput"
-        placeholder="Ask anything… (Shift+Enter for new line)"
+        placeholder="Ask anything… (Shift+Enter for new line, type / for commands)"
         rows="1"
         autocomplete="off"
       ></textarea>
+      <div class="slash-menu" id="slashMenu" hidden></div>
+      <button type="button" class="send-btn stop-btn" id="stopBtn" title="Stop" style="display:none">■</button>
       <button type="submit" class="send-btn" id="sendBtn" title="Send">
         <span id="sendIcon">➤</span>
         <span id="loadingIcon" style="display:none">⏳</span>

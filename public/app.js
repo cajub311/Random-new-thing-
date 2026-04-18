@@ -3,14 +3,16 @@
 const API = '';  // same-origin; set full URL if backend is separate
 
 // ── State ─────────────────────────────────────────────────────────────────
-let providers  = {};
-let messages   = [];        // {role, content}[] — conversation history
-let isLoading  = false;
-let chatMode   = 'auto';    // 'auto' | 'agent' | 'ask-all'
+let providers   = {};
+let messages    = [];            // {role, content}[] — conversation history
+let isLoading   = false;
+let chatMode    = 'auto';        // 'auto' | 'agent' | 'ask-all'
 let pendingFileText = null;
+let currentController = null;    // AbortController for in-flight requests
+let sessions    = [];            // [{id, title, mode, messages, updated}]
+let currentSessionId = null;
 
-// Provider priority for auto-fallback. Pollinations is first because it
-// requires no API key, so CloudClaw works out of the box.
+// Pollinations is the keyless default, so fallback order puts it first.
 const PROVIDER_ORDER = ['pollinations', 'groq', 'gemini', 'cohere', 'together', 'huggingface'];
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -30,6 +32,7 @@ const userInput      = document.getElementById('userInput');
 const sendBtn        = document.getElementById('sendBtn');
 const sendIcon       = document.getElementById('sendIcon');
 const loadingIcon    = document.getElementById('loadingIcon');
+const stopBtn        = document.getElementById('stopBtn');
 const clearBtn       = document.getElementById('clearBtn');
 const newChatBtn     = document.getElementById('newChatBtn');
 const sidebarToggle  = document.getElementById('sidebarToggle');
@@ -43,10 +46,39 @@ const activePill     = document.getElementById('activePill');
 const filesList      = document.getElementById('filesList');
 const refreshFilesBtn= document.getElementById('refreshFilesBtn');
 const keySection     = document.getElementById('keySection');
+const sessionsList   = document.getElementById('sessionsList');
+const exportChatBtn  = document.getElementById('exportChatBtn');
+const slashMenu      = document.getElementById('slashMenu');
+
+// ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
+if (window.marked) {
+  marked.setOptions({
+    gfm: true,
+    breaks: true,
+    highlight(code, lang) {
+      try {
+        if (lang && window.hljs?.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+        return window.hljs ? hljs.highlightAuto(code).value : code;
+      } catch { return code; }
+    },
+  });
+}
+
+function renderMarkdown(text) {
+  if (!window.marked) return escapeHtml(text).replace(/\n/g, '<br>');
+  const html = marked.parse(String(text ?? ''));
+  return window.DOMPurify ? DOMPurify.sanitize(html, { ADD_ATTR: ['target', 'download'] }) : html;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
+  loadSessions();
   try {
     const res = await fetch(`${API}/api/providers`);
     providers = await res.json();
@@ -56,6 +88,7 @@ async function init() {
   } catch (e) {
     setStatus('error', 'Cannot reach server');
   }
+  renderSessions();
 }
 
 function buildProviderUI() {
@@ -70,7 +103,7 @@ function buildProviderUI() {
     const card = document.createElement('div');
     card.className = 'provider-card' + (p.configured ? ' configured' : '');
     card.innerHTML = `
-      <div class="card-name">${p.name}</div>
+      <div class="card-name">${escapeHtml(p.name)}</div>
       <div class="card-tag">${p.configured ? '✓ Connected' : 'FREE tier'}</div>`;
     card.addEventListener('click', () => {
       providerSelect.value = id;
@@ -83,7 +116,6 @@ function buildProviderUI() {
 }
 
 function restoreProvider() {
-  // Auto-select the first provider that has a key available
   const saved = localStorage.getItem('cc_provider');
   const firstAvailable = getAvailableProviders()[0]?.id;
   const target = (saved && providers[saved]) ? saved : (firstAvailable || Object.keys(providers)[0]);
@@ -124,18 +156,15 @@ providerSelect.addEventListener('change', () => {
 apiKeyInput.addEventListener('input', () => {
   const id = providerSelect.value;
   const trimmed = apiKeyInput.value.trim();
-  if (trimmed) {
-    localStorage.setItem(`cc_key_${id}`, trimmed);
-  } else {
-    localStorage.removeItem(`cc_key_${id}`);
-  }
+  if (trimmed) localStorage.setItem(`cc_key_${id}`, trimmed);
+  else         localStorage.removeItem(`cc_key_${id}`);
   updateStatus();
 });
 
 // ── Mode toggle ────────────────────────────────────────────────────────────
 const MODE_HINTS = {
-  'auto':    'Chat mode — tries providers in order, auto-fallback on failure',
-  'agent':   'Agent mode — the AI can search the web, create files, and draft emails',
+  'auto':    'Chat mode — streams, tries providers in order, auto-fallback',
+  'agent':   'Agent mode — AI uses tools: web, files, images, email, math',
   'ask-all': 'Sends to all configured providers simultaneously',
 };
 modeToggle.addEventListener('click', e => {
@@ -154,7 +183,6 @@ function setChatMode(mode) {
 
 // ── Available providers helper ─────────────────────────────────────────────
 function getAvailableProviders({ toolsOnly = false } = {}) {
-  // Returns [{id, key}] in priority order for providers that are usable.
   const preferred = providerSelect.value;
   const ordered = [preferred, ...PROVIDER_ORDER.filter(id => id !== preferred)];
   return ordered
@@ -175,10 +203,7 @@ function updateStatus() {
   const needsTools = chatMode === 'agent';
   const available = getAvailableProviders({ toolsOnly: needsTools });
   if (available.length === 0) {
-    const msg = needsTools
-      ? 'Agent mode needs a tool-capable provider'
-      : 'No keys configured';
-    setStatus('offline', msg);
+    setStatus('offline', needsTools ? 'Agent mode needs a tool-capable provider' : 'No keys configured');
     activePill.textContent = '';
     activePill.className = 'provider-pill';
     return;
@@ -205,73 +230,152 @@ function setStatus(state, text) {
   statusText.textContent = text;
 }
 
-// ── Low-level API call ─────────────────────────────────────────────────────
-async function callProvider(id, key, msgs) {
-  const res = await fetch(`${API}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      provider: id,
-      model: (providerSelect.value === id) ? modelSelect.value : providers[id].defaultModel,
-      apiKey: key || undefined,
-      messages: [
-        { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
-        ...msgs,
-      ],
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok || data.error) throw new Error(data.error || 'Unknown error');
-  return data; // {reply, provider, model}
-}
-
-// ── Auto mode: try providers in order, fallback on failure ─────────────────
+// ── Chat mode: streaming first, fallback to JSON on failure ───────────────
 async function sendAuto(msgs) {
   const available = getAvailableProviders();
   if (available.length === 0) {
-    appendMessage('assistant', 'No API keys configured. Add at least one free key in the sidebar.', true);
-    setLoading(false);
+    appendMessage('assistant', 'No providers available. Make sure Pollinations is selected or add a key.', true);
     return;
   }
-
-  const typingId = appendTyping(providers[available[0].id].name);
 
   for (let i = 0; i < available.length; i++) {
     const { id, key } = available[i];
     const name = providers[id].name;
     if (i > 0) setStatus('warning', `Trying ${name}…`);
-    try {
-      const data = await callProvider(id, key, msgs);
-      removeTyping(typingId);
-      appendMessage('assistant', data.reply, false, id);
-      messages.push({ role: 'assistant', content: data.reply });
-      setStatus('online', `${name} responded`);
-      activePill.textContent = name;
-      activePill.className = 'provider-pill online';
-      return;
-    } catch (err) {
-      if (i < available.length - 1) {
-        setStatus('warning', `${name} failed — trying ${providers[available[i + 1].id].name}…`);
-      }
-    }
+
+    const ok = await streamChat(id, key, msgs, name);
+    if (ok) return;
+    // streamChat returns false on failure; try next provider
   }
 
-  removeTyping(typingId);
-  appendMessage('assistant', 'All providers failed. Please check your API keys.', true);
+  appendMessage('assistant', 'All providers failed. Please check your API keys or connection.', true);
   setStatus('error', 'All providers failed');
 }
 
-// ── Agent mode: tool-calling loop on the server ────────────────────────────
+async function streamChat(id, key, msgs, name) {
+  const bubble = appendAssistantShell(id);
+  const bodyEl = bubble.querySelector('.msg-bubble');
+  bodyEl.classList.add('streaming');
+  bodyEl.innerHTML = '<div class="typing-bubble"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>';
+  currentController = new AbortController();
+  setLoading(true, true);
+
+  let buffer = '';
+  let hadAny = false;
+
+  try {
+    const res = await fetch(`${API}/api/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: id,
+        model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
+        apiKey: key || undefined,
+        messages: [
+          { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
+          ...msgs,
+        ],
+      }),
+      signal: currentController.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      let errMsg = `HTTP ${res.status}`;
+      try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
+      bubble.remove();
+      return false;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const lines = chunk.split('\n');
+        let event = 'message';
+        let data = '';
+        for (const l of lines) {
+          if (l.startsWith('event:')) event = l.slice(6).trim();
+          else if (l.startsWith('data:')) data += l.slice(5).trim();
+        }
+        if (!data) continue;
+        try {
+          const obj = JSON.parse(data);
+          if (event === 'delta' && obj.content) {
+            buffer += obj.content;
+            if (!hadAny) { bodyEl.innerHTML = ''; hadAny = true; }
+            bodyEl.innerHTML = renderMarkdown(buffer) + '<span class="cursor">▋</span>';
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          } else if (event === 'done') {
+            // final render without cursor
+            bodyEl.innerHTML = renderMarkdown(buffer);
+            enhanceCodeBlocks(bodyEl);
+            bodyEl.classList.remove('streaming');
+            wireMessageActions(bubble, buffer);
+            messages.push({ role: 'assistant', content: buffer });
+            setStatus('online', `${name} responded`);
+            activePill.textContent = name;
+            activePill.className = 'provider-pill online';
+            saveCurrentSession();
+            return true;
+          } else if (event === 'error') {
+            throw new Error(obj.message || 'stream error');
+          }
+        } catch (e) { /* swallow malformed chunk */ }
+      }
+    }
+
+    // stream ended without "done" event
+    if (buffer) {
+      bodyEl.innerHTML = renderMarkdown(buffer);
+      enhanceCodeBlocks(bodyEl);
+      bodyEl.classList.remove('streaming');
+      wireMessageActions(bubble, buffer);
+      messages.push({ role: 'assistant', content: buffer });
+      saveCurrentSession();
+      return true;
+    }
+    bubble.remove();
+    return false;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      bodyEl.innerHTML = renderMarkdown(buffer || '_(stopped)_');
+      enhanceCodeBlocks(bodyEl);
+      bodyEl.classList.remove('streaming');
+      wireMessageActions(bubble, buffer);
+      if (buffer) messages.push({ role: 'assistant', content: buffer });
+      setStatus('online', 'Stopped');
+      return true;
+    }
+    console.error(err);
+    bubble.remove();
+    return false;
+  } finally {
+    currentController = null;
+    setLoading(false);
+  }
+}
+
+// ── Agent mode ────────────────────────────────────────────────────────────
 async function sendAgent(msgs) {
   const available = getAvailableProviders({ toolsOnly: true });
   if (available.length === 0) {
-    appendMessage('assistant', 'Agent mode needs a tool-capable provider. Pollinations (no key required) is enabled by default — make sure it is selected.', true);
-    setLoading(false);
+    appendMessage('assistant', 'Agent mode needs a tool-capable provider (Pollinations, Groq, or Together).', true);
     return;
   }
   const { id, key } = available[0];
   const name = providers[id].name;
   const typingId = appendTyping(`${name} (Agent)`);
+  currentController = new AbortController();
+  setLoading(true, true);
 
   try {
     const res = await fetch(`${API}/api/agent`, {
@@ -287,6 +391,7 @@ async function sendAgent(msgs) {
         ],
         maxSteps: 6,
       }),
+      signal: currentController.signal,
     });
     const data = await res.json();
     removeTyping(typingId);
@@ -300,11 +405,19 @@ async function sendAgent(msgs) {
     setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
     activePill.textContent = `🤖 ${name}`;
     activePill.className = 'provider-pill online';
+    saveCurrentSession();
     loadFiles();
   } catch (err) {
     removeTyping(typingId);
-    appendMessage('assistant', `Agent error: ${err.message}`, true);
-    setStatus('error', 'Agent failed');
+    if (err.name !== 'AbortError') {
+      appendMessage('assistant', `Agent error: ${err.message}`, true);
+      setStatus('error', 'Agent failed');
+    } else {
+      setStatus('online', 'Stopped');
+    }
+  } finally {
+    currentController = null;
+    setLoading(false);
   }
 }
 
@@ -313,28 +426,41 @@ async function sendAskAll(msgs) {
   const available = getAvailableProviders();
   if (available.length === 0) {
     appendMessage('assistant', 'No API keys configured. Add at least one free key in the sidebar.', true);
-    setLoading(false);
     return;
   }
 
-  // One typing bubble per provider
-  const slots = available.map(({ id }) => ({
-    id,
-    typingId: appendTyping(providers[id].name),
-  }));
+  const slots = available.map(({ id }) => ({ id, typingId: appendTyping(providers[id].name) }));
+  setLoading(true);
 
   await Promise.allSettled(available.map(async ({ id, key }, i) => {
     try {
-      const data = await callProvider(id, key, msgs);
+      const res = await fetch(`${API}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: id,
+          model: providers[id].defaultModel,
+          apiKey: key || undefined,
+          messages: [
+            { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
+            ...msgs,
+          ],
+        }),
+      });
+      const data = await res.json();
       removeTyping(slots[i].typingId);
-      appendMessage('assistant', data.reply, false, id, true /* isAskAll */);
+      if (!res.ok || data.error) {
+        appendMessage('assistant', `[${providers[id].name}] ${data.error || res.statusText}`, true, id, true);
+      } else {
+        appendMessage('assistant', data.reply, false, id, true);
+      }
     } catch (err) {
       removeTyping(slots[i].typingId);
       appendMessage('assistant', `[${providers[id].name}] ${err.message}`, true, id, true);
     }
   }));
 
-  // Ask All doesn't push to conversation history (it's compare mode)
+  setLoading(false);
   setStatus('online', `${available.length} providers answered`);
 }
 
@@ -345,10 +471,16 @@ chatForm.addEventListener('submit', async e => {
   let text = userInput.value.trim();
   if (!text && !pendingFileText) return;
 
+  // Slash commands
+  if (text.startsWith('/')) {
+    const handled = handleSlashCommand(text);
+    if (handled) { userInput.value = ''; userInput.style.height = 'auto'; return; }
+  }
+
   if (pendingFileText) {
     text = text ? `${text}\n\n\`\`\`\n${pendingFileText}\n\`\`\`` : `\`\`\`\n${pendingFileText}\n\`\`\``;
     pendingFileText = null;
-    userInput.placeholder = 'Ask anything… (Shift+Enter for new line)';
+    userInput.placeholder = 'Ask anything… (Shift+Enter for new line, type / for commands)';
   }
 
   userInput.value = '';
@@ -356,17 +488,88 @@ chatForm.addEventListener('submit', async e => {
   removeWelcome();
   appendMessage('user', text);
   messages.push({ role: 'user', content: text });
-  setLoading(true);
+  saveCurrentSession();
 
-  if (chatMode === 'ask-all') {
-    await sendAskAll([...messages]);
-  } else if (chatMode === 'agent') {
-    await sendAgent([...messages]);
-  } else {
-    await sendAuto([...messages]);
+  if (chatMode === 'ask-all')     await sendAskAll([...messages]);
+  else if (chatMode === 'agent')  await sendAgent([...messages]);
+  else                            await sendAuto([...messages]);
+});
+
+// ── Slash commands ─────────────────────────────────────────────────────────
+const SLASH_COMMANDS = [
+  { cmd: '/clear',  desc: 'Clear the current conversation' },
+  { cmd: '/new',    desc: 'Start a new conversation' },
+  { cmd: '/export', desc: 'Download this conversation as markdown' },
+  { cmd: '/chat',   desc: 'Switch to chat mode' },
+  { cmd: '/agent',  desc: 'Switch to agent mode (tools)' },
+  { cmd: '/askall', desc: 'Switch to ask-all mode' },
+  { cmd: '/image ', desc: 'Agent: generate an image from a prompt' },
+  { cmd: '/search ',desc: 'Agent: web search + summary' },
+  { cmd: '/file ',  desc: 'Agent: create a text file' },
+  { cmd: '/help',   desc: 'Show this list' },
+];
+
+function handleSlashCommand(text) {
+  const [raw, ...rest] = text.split(/\s+/);
+  const cmd = raw.toLowerCase();
+  const arg = rest.join(' ').trim();
+  switch (cmd) {
+    case '/clear':  messages = []; showWelcome(); saveCurrentSession(); return true;
+    case '/new':    newSession(); return true;
+    case '/export': exportChat(); return true;
+    case '/chat':   setChatMode('auto'); return true;
+    case '/agent':  setChatMode('agent'); return true;
+    case '/askall': setChatMode('ask-all'); return true;
+    case '/help': {
+      removeWelcome();
+      appendMessage('assistant', '**Slash commands**\n\n' + SLASH_COMMANDS.map(s => `- \`${s.cmd.trim()}\` — ${s.desc}`).join('\n'));
+      return true;
+    }
+    case '/image': {
+      setChatMode('agent');
+      userInput.value = `Generate an image: ${arg || 'a cute cat in a forest'}`;
+      return false;
+    }
+    case '/search': {
+      setChatMode('agent');
+      userInput.value = `Search the web for: ${arg}. Summarize the key findings.`;
+      return false;
+    }
+    case '/file': {
+      setChatMode('agent');
+      userInput.value = `Create a file. ${arg}`;
+      return false;
+    }
+    default: return false;
   }
+}
 
-  setLoading(false);
+userInput.addEventListener('input', () => {
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
+  const v = userInput.value;
+  if (v.startsWith('/') && !v.includes('\n') && !v.includes(' ')) {
+    const matches = SLASH_COMMANDS.filter(s => s.cmd.startsWith(v.toLowerCase()));
+    if (matches.length) {
+      slashMenu.hidden = false;
+      slashMenu.innerHTML = matches.map(m =>
+        `<div class="slash-item" data-cmd="${m.cmd}"><code>${m.cmd}</code><span>${escapeHtml(m.desc)}</span></div>`
+      ).join('');
+      return;
+    }
+  }
+  slashMenu.hidden = true;
+});
+
+slashMenu.addEventListener('click', e => {
+  const item = e.target.closest('.slash-item');
+  if (!item) return;
+  userInput.value = item.dataset.cmd;
+  slashMenu.hidden = true;
+  userInput.focus();
+  if (!item.dataset.cmd.endsWith(' ')) {
+    chatForm.dispatchEvent(new Event('submit'));
+  }
 });
 
 // ── UI controls ────────────────────────────────────────────────────────────
@@ -376,23 +579,26 @@ toggleKeyBtn.addEventListener('click', () => {
 
 tempRange.addEventListener('input', () => tempVal.textContent = tempRange.value);
 
-clearBtn.addEventListener('click', () => { messages = []; showWelcome(); });
-newChatBtn.addEventListener('click', () => { messages = []; showWelcome(); });
+clearBtn.addEventListener('click', () => { messages = []; showWelcome(); saveCurrentSession(); });
+newChatBtn.addEventListener('click', () => newSession());
 
 sidebarToggle.addEventListener('click', () => {
   sidebar.classList.toggle('collapsed');
   sidebar.classList.toggle('open');
 });
 
-userInput.addEventListener('input', () => {
-  userInput.style.height = 'auto';
-  userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
+stopBtn.addEventListener('click', () => {
+  if (currentController) currentController.abort();
 });
 
 userInput.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     chatForm.dispatchEvent(new Event('submit'));
+  }
+  if (e.key === 'Escape') {
+    slashMenu.hidden = true;
+    if (isLoading && currentController) currentController.abort();
   }
 });
 
@@ -405,10 +611,10 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
 });
 
+exportChatBtn.addEventListener('click', exportChat);
+
 // ── Render helpers ─────────────────────────────────────────────────────────
-function removeWelcome() {
-  messagesEl.querySelector('.welcome')?.remove();
-}
+function removeWelcome() { messagesEl.querySelector('.welcome')?.remove(); }
 
 function showWelcome() {
   messagesEl.innerHTML = `
@@ -417,13 +623,22 @@ function showWelcome() {
       <h1>Welcome to CloudClaw</h1>
       <p>Free, open AI — powered by the best no-cost API providers.</p>
       <div class="provider-cards" id="providerCardsWelcome"></div>
-      <p class="tip">Add at least one free API key in the sidebar — CloudClaw auto-connects and falls back if needed.</p>
+      <div class="quick-prompts">
+        <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
+        <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
+        <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
+        <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
+        <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
+        <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+      </div>
+      <p class="tip"><strong>🎉 No API key required!</strong> CloudClaw works out of the box with the free keyless Pollinations provider. Type <code>/help</code> for commands.</p>
     </div>`;
   const cards = document.getElementById('providerCardsWelcome');
   for (const [id, p] of Object.entries(providers)) {
     const card = document.createElement('div');
-    card.className = 'provider-card' + (getAvailableProviders().some(a => a.id === id) ? ' configured' : '');
-    card.innerHTML = `<div class="card-name">${p.name}</div><div class="card-tag">${getAvailableProviders().some(a => a.id === id) ? '✓ Connected' : 'FREE tier'}</div>`;
+    const connected = getAvailableProviders().some(a => a.id === id);
+    card.className = 'provider-card' + (connected ? ' configured' : '');
+    card.innerHTML = `<div class="card-name">${escapeHtml(p.name)}</div><div class="card-tag">${connected ? '✓ Connected' : 'FREE tier'}</div>`;
     card.addEventListener('click', () => {
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
@@ -434,15 +649,39 @@ function showWelcome() {
   }
 }
 
+function appendAssistantShell(providerId = null) {
+  removeWelcome();
+  const div = document.createElement('div');
+  div.className = 'message assistant';
+  const name = providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name || 'AI';
+  div.innerHTML = `
+    <div class="msg-meta">
+      <span class="msg-avatar">🐾</span>
+      <strong>${escapeHtml(name)}</strong>
+      <span>${timestamp()}</span>
+    </div>
+    <div class="msg-bubble"></div>
+    <div class="msg-actions">
+      <button class="msg-action-btn copy-btn">Copy</button>
+      <button class="msg-action-btn retry-btn">Retry</button>
+    </div>`;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
 function appendMessage(role, content, isError = false, providerId = null, isAskAll = false) {
+  removeWelcome();
   const div = document.createElement('div');
   div.className = `message ${role}${isAskAll ? ' ask-all-group' : ''}`;
   const avatar = role === 'user' ? '🧑' : '🐾';
-  const name   = role === 'user' ? 'You' : (providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name) || 'AI';
+  const name = role === 'user'
+    ? 'You'
+    : (providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name) || 'AI';
   div.innerHTML = `
     <div class="msg-meta">
       <span class="msg-avatar">${avatar}</span>
-      <strong>${name}</strong>
+      <strong>${escapeHtml(name)}</strong>
       <span>${timestamp()}</span>
     </div>
     <div class="msg-bubble${isError ? ' error-bubble' : ''}">${renderMarkdown(content)}</div>
@@ -450,39 +689,53 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
       <button class="msg-action-btn copy-btn">Copy</button>
       ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
     </div>`;
+  enhanceCodeBlocks(div.querySelector('.msg-bubble'));
+  wireMessageActions(div, content);
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
 
-  div.querySelectorAll('pre').forEach(pre => {
-    const btn = document.createElement('button');
-    btn.className = 'copy-code-btn';
-    btn.textContent = 'Copy';
-    btn.addEventListener('click', () => {
-      navigator.clipboard.writeText(pre.querySelector('code')?.textContent || pre.textContent);
-      btn.textContent = 'Copied!';
-      setTimeout(() => btn.textContent = 'Copy', 2000);
-    });
-    pre.style.position = 'relative';
-    pre.appendChild(btn);
-  });
-
+function wireMessageActions(div, content) {
   div.querySelector('.copy-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(content);
     const btn = div.querySelector('.copy-btn');
     btn.textContent = 'Copied!';
     setTimeout(() => { if (btn) btn.textContent = 'Copy'; }, 2000);
   });
-
   div.querySelector('.retry-btn')?.addEventListener('click', () => {
-    messages.pop();
+    if (messages[messages.length - 1]?.role === 'assistant') messages.pop();
     div.remove();
-    chatForm.dispatchEvent(new Event('submit'));
+    setLoading(false);
+    if (chatMode === 'agent') sendAgent([...messages]);
+    else if (chatMode === 'ask-all') sendAskAll([...messages]);
+    else sendAuto([...messages]);
   });
+}
 
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return div;
+function enhanceCodeBlocks(root) {
+  if (!root) return;
+  root.querySelectorAll('pre').forEach(pre => {
+    if (pre.querySelector('.copy-code-btn')) return;
+    const code = pre.querySelector('code');
+    if (code && window.hljs && !code.classList.contains('hljs')) {
+      try { hljs.highlightElement(code); } catch {}
+    }
+    const btn = document.createElement('button');
+    btn.className = 'copy-code-btn';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(code?.textContent || pre.textContent);
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 2000);
+    });
+    pre.style.position = 'relative';
+    pre.appendChild(btn);
+  });
 }
 
 function appendAgentMessage(providerId, data) {
+  removeWelcome();
   const div = document.createElement('div');
   div.className = 'message assistant';
   const name = providers[providerId]?.name || 'AI';
@@ -496,7 +749,7 @@ function appendAgentMessage(providerId, data) {
   div.innerHTML = `
     <div class="msg-meta">
       <span class="msg-avatar">🤖</span>
-      <strong>${name}</strong>
+      <strong>${escapeHtml(name)}</strong>
       <span class="agent-badge">agent</span>
       <span>${timestamp()}</span>
     </div>
@@ -506,6 +759,7 @@ function appendAgentMessage(providerId, data) {
       <button class="msg-action-btn copy-btn">Copy</button>
     </div>`;
 
+  enhanceCodeBlocks(div.querySelector('.msg-bubble'));
   div.querySelector('.copy-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(data.reply || '');
     const btn = div.querySelector('.copy-btn');
@@ -520,9 +774,7 @@ function appendAgentMessage(providerId, data) {
 
 function renderTraceItem(item) {
   const { tool, args, result, step } = item;
-  const argStr = (() => {
-    try { return JSON.stringify(args, null, 2); } catch { return String(args); }
-  })();
+  const argStr = (() => { try { return JSON.stringify(args, null, 2); } catch { return String(args); } })();
   let summary = '';
   if (tool === 'web_search' && result?.results?.length) {
     summary = `<ul class="trace-results">${result.results.map(r =>
@@ -534,6 +786,10 @@ function renderTraceItem(item) {
     summary = `<div class="trace-file">📄 <a href="${escapeAttr(result.download_url)}" download>${escapeHtml(result.filename)}</a> (${result.bytes} bytes)</div>`;
   } else if (tool === 'draft_email' && result?.mailto_link) {
     summary = `<div class="trace-file">✉️ <a href="${escapeAttr(result.mailto_link)}">Open draft to ${escapeHtml(result.to)}</a></div>`;
+  } else if (tool === 'generate_image' && result?.image_url) {
+    summary = `<div class="trace-image"><img src="${escapeAttr(result.image_url)}" alt="${escapeAttr(result.prompt || '')}" loading="lazy" /><div class="trace-snippet">${escapeHtml(result.prompt || '')}</div></div>`;
+  } else if (tool === 'calculate' && typeof result?.result === 'number') {
+    summary = `<div class="trace-snippet">Result: <strong>${escapeHtml(String(result.result))}</strong></div>`;
   } else if (result?.error) {
     summary = `<div class="trace-error">Error: ${escapeHtml(result.error)}</div>`;
   }
@@ -544,11 +800,6 @@ function renderTraceItem(item) {
       ${summary}
     </div>`;
 }
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-}
-function escapeAttr(s) { return escapeHtml(s); }
 
 async function loadFiles() {
   if (!filesList) return;
@@ -582,12 +833,13 @@ document.addEventListener('click', e => {
 });
 
 function appendTyping(providerName = 'AI') {
+  removeWelcome();
   const id = 'typing-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   const div = document.createElement('div');
   div.className = 'message assistant';
   div.id = id;
   div.innerHTML = `
-    <div class="msg-meta"><span class="msg-avatar">🐾</span><strong>${providerName}</strong></div>
+    <div class="msg-meta"><span class="msg-avatar">🐾</span><strong>${escapeHtml(providerName)}</strong></div>
     <div class="msg-bubble">
       <div class="typing-bubble">
         <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
@@ -600,58 +852,132 @@ function appendTyping(providerName = 'AI') {
 
 function removeTyping(id) { document.getElementById(id)?.remove(); }
 
-function setLoading(state) {
+function setLoading(state, showStop = false) {
   isLoading = state;
   sendBtn.disabled = state;
   sendIcon.style.display = state ? 'none' : 'inline';
   loadingIcon.style.display = state ? 'inline' : 'none';
+  stopBtn.style.display = state && showStop ? 'flex' : 'none';
+  sendBtn.style.display = state && showStop ? 'none' : 'flex';
 }
 
 function timestamp() {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// ── Markdown renderer ──────────────────────────────────────────────────────
-function renderMarkdown(text) {
-  let html = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+// ── Sessions ───────────────────────────────────────────────────────────────
+function loadSessions() {
+  try { sessions = JSON.parse(localStorage.getItem('cc_sessions') || '[]'); } catch { sessions = []; }
+  currentSessionId = localStorage.getItem('cc_current_session') || null;
+  if (currentSessionId) {
+    const s = sessions.find(s => s.id === currentSessionId);
+    if (s) {
+      messages = s.messages || [];
+      chatMode = s.mode || 'auto';
+      if (messages.length) replayMessages();
+    }
+  }
+}
 
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre><code class="lang-${lang}">${code.trimEnd()}</code></pre>`);
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/_(.+?)_/g, '<em>$1</em>');
-  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-  html = html.replace(/^---$/gm, '<hr>');
-  html = html.replace(/(^[*\-] .+(\n[*\-] .+)*)/gm, block => {
-    const items = block.split('\n').map(l => `<li>${l.replace(/^[*\-] /, '')}</li>`).join('');
-    return `<ul>${items}</ul>`;
-  });
-  html = html.replace(/(^\d+\. .+(\n\d+\. .+)*)/gm, block => {
-    const items = block.split('\n').map(l => `<li>${l.replace(/^\d+\. /, '')}</li>`).join('');
-    return `<ol>${items}</ol>`;
-  });
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  html = html.replace(/((\|.+\|\n)+)/g, block => {
-    const rows = block.trim().split('\n').filter(r => !/^\|[-:| ]+\|$/.test(r));
-    if (rows.length < 1) return block;
-    const [head, ...body] = rows;
-    const ths = head.split('|').filter(Boolean).map(c => `<th>${c.trim()}</th>`).join('');
-    const trs = body.map(r => '<tr>' + r.split('|').filter(Boolean).map(c => `<td>${c.trim()}</td>`).join('') + '</tr>').join('');
-    return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
-  });
-  html = html.replace(/\n\n+/g, '</p><p>');
-  html = `<p>${html}</p>`;
-  html = html.replace(/(?<!<\/?(p|h[1-6]|ul|ol|li|blockquote|pre|table|tr|td|th|hr)[^>]*>)\n(?!<\/?[a-z])/g, '<br>');
-  html = html.replace(/<p>\s*<\/p>/g, '');
-  return html;
+function replayMessages() {
+  messagesEl.innerHTML = '';
+  for (const m of messages) {
+    if (m.role === 'user' || m.role === 'assistant') {
+      appendMessage(m.role, m.content);
+    }
+  }
+}
+
+function newSession() {
+  messages = [];
+  currentSessionId = null;
+  localStorage.removeItem('cc_current_session');
+  showWelcome();
+  renderSessions();
+}
+
+function saveCurrentSession() {
+  if (messages.length === 0) return;
+  if (!currentSessionId) {
+    currentSessionId = 's_' + Date.now();
+    localStorage.setItem('cc_current_session', currentSessionId);
+    sessions.unshift({ id: currentSessionId, messages: [...messages], mode: chatMode, updated: Date.now(), title: sessionTitle(messages) });
+  } else {
+    const s = sessions.find(s => s.id === currentSessionId);
+    if (s) {
+      s.messages = [...messages];
+      s.mode = chatMode;
+      s.updated = Date.now();
+      s.title = sessionTitle(messages);
+    } else {
+      sessions.unshift({ id: currentSessionId, messages: [...messages], mode: chatMode, updated: Date.now(), title: sessionTitle(messages) });
+    }
+  }
+  sessions = sessions.slice(0, 30);
+  try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
+  renderSessions();
+}
+
+function sessionTitle(msgs) {
+  const first = msgs.find(m => m.role === 'user');
+  if (!first) return 'New chat';
+  const t = first.content.replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim();
+  return t.length > 48 ? t.slice(0, 48) + '…' : t;
+}
+
+function renderSessions() {
+  if (!sessionsList) return;
+  if (sessions.length === 0) {
+    sessionsList.innerHTML = '<li class="empty">No past chats</li>';
+    return;
+  }
+  sessionsList.innerHTML = sessions.slice(0, 12).map(s => `
+    <li class="${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
+      <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
+      <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
+    </li>`).join('');
+}
+
+sessionsList?.addEventListener('click', e => {
+  const del = e.target.closest('.session-del');
+  if (del) {
+    const id = del.dataset.del;
+    sessions = sessions.filter(s => s.id !== id);
+    try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
+    if (id === currentSessionId) { currentSessionId = null; messages = []; showWelcome(); }
+    renderSessions();
+    return;
+  }
+  const li = e.target.closest('li[data-id]');
+  if (!li) return;
+  const s = sessions.find(x => x.id === li.dataset.id);
+  if (!s) return;
+  currentSessionId = s.id;
+  messages = [...(s.messages || [])];
+  chatMode = s.mode || 'auto';
+  setChatMode(chatMode);
+  localStorage.setItem('cc_current_session', currentSessionId);
+  replayMessages();
+  renderSessions();
+});
+
+function exportChat() {
+  if (messages.length === 0) return;
+  const title = sessionTitle(messages);
+  const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
+    messages.map(m => {
+      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
+      return `### ${who}\n\n${m.content}\n`;
+    }).join('\n');
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (title.replace(/[^\w\-]/g, '_').slice(0, 40) || 'chat') + '.md';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── Persist settings ───────────────────────────────────────────────────────
