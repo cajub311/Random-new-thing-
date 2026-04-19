@@ -309,6 +309,26 @@ function orderedProviderIds() {
   return ids;
 }
 
+/** Drop saved model allowlists that no longer match server model IDs (prevents empty dropdown). */
+function sanitizeModelAllowlistsForCurrentCatalog() {
+  for (const id of Object.keys(providers)) {
+    const p = providers[id];
+    const key = MODEL_ALLOW_PREFIX + id;
+    let raw;
+    try { raw = localStorage.getItem(key); } catch { continue; }
+    if (!raw || !p?.models?.length) continue;
+    try {
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) { localStorage.removeItem(key); continue; }
+      const next = arr.filter(m => typeof m === 'string' && p.models.includes(m));
+      if (next.length === 0 || next.length >= p.models.length) localStorage.removeItem(key);
+      else if (next.length !== arr.length) localStorage.setItem(key, JSON.stringify(next));
+    } catch {
+      try { localStorage.removeItem(key); } catch {}
+    }
+  }
+}
+
 function renderProviderSkipList() {
   if (!providerSkipList) return;
   const skipped = getSkippedProviderIds();
@@ -357,6 +377,7 @@ function buildProviderUI() {
     });
     providerCards.appendChild(card);
   }
+  sanitizeModelAllowlistsForCurrentCatalog();
   syncHeaderProviderSelect();
   renderProviderSkipList();
   renderAskAllProviderList();
