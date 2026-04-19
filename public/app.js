@@ -52,6 +52,9 @@ const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
+const commandPalette = document.getElementById('commandPalette');
+const commandPaletteSearch = document.getElementById('commandPaletteSearch');
+const commandPaletteList = document.getElementById('commandPaletteList');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -112,11 +115,21 @@ function buildProviderUI() {
       <div class="card-name">${escapeHtml(p.name)}</div>
       <div class="card-tag">${tag}</div>
       ${p.description ? `<div class="card-desc">${escapeHtml(p.description)}</div>` : ''}`;
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', `Select provider ${p.name}`);
     card.addEventListener('click', () => {
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
       sidebar.classList.remove('collapsed');
       sidebar.classList.add('open');
+      syncSidebarAria();
+    });
+    card.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        card.click();
+      }
     });
     providerCards.appendChild(card);
   }
@@ -182,10 +195,29 @@ modeToggle.addEventListener('click', e => {
 function setChatMode(mode) {
   chatMode = mode;
   modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  syncModeButtonsAriaPressed();
   modeHint.textContent = MODE_HINTS[mode] || '';
   updateStatus();
   localStorage.setItem('cc_mode', mode);
   if (mode === 'agent') loadFiles();
+}
+
+function syncModeButtonsAriaPressed() {
+  modeToggle.querySelectorAll('.mode-btn').forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.mode === chatMode ? 'true' : 'false');
+  });
+}
+
+function isSidebarExpanded() {
+  const mobile = window.matchMedia('(max-width: 640px)').matches;
+  if (mobile) return sidebar.classList.contains('open');
+  return !sidebar.classList.contains('collapsed');
+}
+
+function syncSidebarAria() {
+  if (!sidebarToggle) return;
+  const expanded = isSidebarExpanded();
+  sidebarToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 }
 
 // ── Available providers helper ─────────────────────────────────────────────
@@ -516,6 +548,116 @@ const SLASH_COMMANDS = [
   { cmd: '/help',   desc: 'Show this list' },
 ];
 
+const COMMAND_PALETTE_ACTIONS = [
+  { id: 'palette-new', label: 'New chat', desc: 'Start a fresh conversation', run: () => newSession() },
+  { id: 'palette-export', label: 'Export chat', desc: 'Download as Markdown', run: () => exportChat() },
+  { id: 'palette-clear', label: 'Clear chat', desc: 'Remove all messages in this chat', run: () => { messages = []; showWelcome(); saveCurrentSession(); } },
+  { id: 'palette-sidebar', label: 'Toggle sidebar', desc: 'Show or hide settings', run: () => { sidebarToggle?.click(); } },
+  { id: 'palette-mode-chat', label: 'Mode: Chat', desc: 'Streaming with provider fallback', run: () => setChatMode('auto') },
+  { id: 'palette-mode-agent', label: 'Mode: Agent', desc: 'Tools: web, files, images', run: () => setChatMode('agent') },
+  { id: 'palette-mode-askall', label: 'Mode: Ask all', desc: 'Query every configured provider', run: () => setChatMode('ask-all') },
+  { id: 'palette-focus-input', label: 'Focus message box', desc: 'Move cursor to the composer', run: () => { userInput.focus(); } },
+  { id: 'palette-help', label: 'Slash commands help', desc: 'Show /help in the chat', run: () => { userInput.value = '/help'; chatForm.dispatchEvent(new Event('submit')); } },
+];
+
+let commandPaletteSelectedIndex = 0;
+
+function openCommandPalette() {
+  if (!commandPalette?.showModal) return;
+  commandPaletteSelectedIndex = 0;
+  commandPaletteSearch.value = '';
+  filterCommandPalette('');
+  commandPalette.showModal();
+  requestAnimationFrame(() => {
+    commandPaletteSearch.focus();
+    syncCommandPaletteSelection();
+  });
+}
+
+function closeCommandPalette() {
+  if (commandPalette?.open) commandPalette.close();
+}
+
+function filterCommandPalette(q) {
+  const needle = q.trim().toLowerCase();
+  const items = !needle
+    ? COMMAND_PALETTE_ACTIONS
+    : COMMAND_PALETTE_ACTIONS.filter(a =>
+      a.label.toLowerCase().includes(needle) || a.desc.toLowerCase().includes(needle)
+    );
+  if (!commandPaletteList) return;
+  if (items.length === 0) {
+    commandPaletteList.innerHTML = '<li class="command-palette-empty">No matching commands</li>';
+    commandPaletteSelectedIndex = 0;
+    if (commandPalette) commandPalette._filteredItems = [];
+    return;
+  }
+  commandPaletteList.innerHTML = items.map((a, i) =>
+    `<li><button type="button" class="command-palette-item" role="option" data-idx="${i}" data-id="${escapeAttr(a.id)}" aria-selected="${i === 0 ? 'true' : 'false'}"><span class="cmd-label">${escapeHtml(a.label)}</span><span class="cmd-desc">${escapeHtml(a.desc)}</span></button></li>`
+  ).join('');
+  commandPaletteList.querySelectorAll('.command-palette-item').forEach((btn, i) => {
+    const action = items[i];
+    btn.addEventListener('click', () => { action.run(); closeCommandPalette(); userInput.focus(); });
+  });
+  commandPalette._filteredItems = items;
+  commandPaletteSelectedIndex = 0;
+}
+
+function syncCommandPaletteSelection() {
+  const items = commandPaletteList?.querySelectorAll('.command-palette-item');
+  if (!items?.length) return;
+  const max = items.length - 1;
+  if (commandPaletteSelectedIndex < 0) commandPaletteSelectedIndex = 0;
+  if (commandPaletteSelectedIndex > max) commandPaletteSelectedIndex = max;
+  items.forEach((el, i) => el.setAttribute('aria-selected', i === commandPaletteSelectedIndex ? 'true' : 'false'));
+  items[commandPaletteSelectedIndex]?.scrollIntoView({ block: 'nearest' });
+}
+
+function runSelectedPaletteCommand() {
+  const items = commandPalette._filteredItems;
+  if (!items?.length) return;
+  const action = items[commandPaletteSelectedIndex];
+  if (action) {
+    action.run();
+    closeCommandPalette();
+    userInput.focus();
+  }
+}
+
+commandPaletteSearch?.addEventListener('input', () => {
+  filterCommandPalette(commandPaletteSearch.value);
+  syncCommandPaletteSelection();
+});
+
+commandPalette?.addEventListener('click', e => {
+  if (e.target === commandPalette) closeCommandPalette();
+});
+
+commandPaletteList?.addEventListener('mousemove', e => {
+  const btn = e.target.closest('.command-palette-item');
+  if (!btn) return;
+  const idx = Number(btn.dataset.idx);
+  if (!Number.isNaN(idx) && idx !== commandPaletteSelectedIndex) {
+    commandPaletteSelectedIndex = idx;
+    syncCommandPaletteSelection();
+  }
+});
+
+commandPalette?.addEventListener('keydown', e => {
+  const items = commandPaletteList?.querySelectorAll('.command-palette-item');
+  const n = items?.length || 0;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (n) { commandPaletteSelectedIndex = (commandPaletteSelectedIndex + 1) % n; syncCommandPaletteSelection(); }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (n) { commandPaletteSelectedIndex = (commandPaletteSelectedIndex - 1 + n) % n; syncCommandPaletteSelection(); }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    runSelectedPaletteCommand();
+  }
+});
+
 function handleSlashCommand(text) {
   const [raw, ...rest] = text.split(/\s+/);
   const cmd = raw.toLowerCase();
@@ -560,7 +702,7 @@ userInput.addEventListener('input', () => {
     if (matches.length) {
       slashMenu.hidden = false;
       slashMenu.innerHTML = matches.map(m =>
-        `<div class="slash-item" data-cmd="${m.cmd}"><code>${m.cmd}</code><span>${escapeHtml(m.desc)}</span></div>`
+        `<div class="slash-item" role="option" tabindex="0" data-cmd="${escapeAttr(m.cmd)}" aria-label="Insert slash command ${escapeAttr(m.cmd.trim())}: ${escapeAttr(m.desc)}"><code>${m.cmd}</code><span>${escapeHtml(m.desc)}</span></div>`
       ).join('');
       return;
     }
@@ -568,15 +710,26 @@ userInput.addEventListener('input', () => {
   slashMenu.hidden = true;
 });
 
-slashMenu.addEventListener('click', e => {
-  const item = e.target.closest('.slash-item');
-  if (!item) return;
+function pickSlashItem(item) {
   userInput.value = item.dataset.cmd;
   slashMenu.hidden = true;
   userInput.focus();
   if (!item.dataset.cmd.endsWith(' ')) {
     chatForm.dispatchEvent(new Event('submit'));
   }
+}
+
+slashMenu.addEventListener('click', e => {
+  const item = e.target.closest('.slash-item');
+  if (!item) return;
+  pickSlashItem(item);
+});
+
+slashMenu.addEventListener('keydown', e => {
+  const item = e.target.closest('.slash-item');
+  if (!item || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  pickSlashItem(item);
 });
 
 // ── UI controls ────────────────────────────────────────────────────────────
@@ -592,12 +745,16 @@ newChatBtn.addEventListener('click', () => newSession());
 sidebarToggle.addEventListener('click', () => {
   sidebar.classList.toggle('collapsed');
   sidebar.classList.toggle('open');
+  syncSidebarAria();
 });
 
 document.getElementById('sidebarClose')?.addEventListener('click', () => {
   sidebar.classList.remove('open');
   sidebar.classList.add('collapsed');
+  syncSidebarAria();
 });
+
+window.addEventListener('resize', () => syncSidebarAria());
 
 // ── Voice input (Web Speech API) ──────────────────────────────────────────
 (() => {
@@ -655,10 +812,24 @@ stopBtn.addEventListener('click', () => {
   if (currentController) currentController.abort();
 });
 
-userInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+document.addEventListener('keydown', e => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && (e.key === 'k' || e.key === 'K')) {
     e.preventDefault();
-    chatForm.dispatchEvent(new Event('submit'));
+    if (commandPalette?.open) closeCommandPalette();
+    else openCommandPalette();
+    return;
+  }
+  if (mod && e.key === 'Enter' && !commandPalette?.open) {
+    e.preventDefault();
+    chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
+  }
+});
+
+userInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault();
+    chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
   }
   if (e.key === 'Escape') {
     slashMenu.hidden = true;
@@ -687,13 +858,13 @@ function showWelcome() {
       <h1>OpenClaw</h1>
       <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
       <div class="provider-cards" id="providerCardsWelcome"></div>
-      <div class="quick-prompts">
-        <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
-        <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+      <div class="quick-prompts" role="group" aria-label="Example prompts">
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories." aria-label="Example: search the web and summarize AI news">🔎 Search web + summarize</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today." aria-label="Example: create a checklist file">📝 Create a file</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue." aria-label="Example: draft a support email">✉️ Draft an email</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style." aria-label="Example: generate a painterly cabin image">🎨 Generate an image</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest." aria-label="Example: mortgage payment calculation">🧮 Do a calculation</button>
+        <button type="button" class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old." aria-label="Example: simple quantum computing explanation">💡 Explain something</button>
       </div>
       <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
     </div>`;
@@ -702,12 +873,22 @@ function showWelcome() {
     const card = document.createElement('div');
     const connected = getAvailableProviders().some(a => a.id === id);
     card.className = 'provider-card' + (connected ? ' configured' : '');
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', `Select provider ${p.name}`);
     card.innerHTML = `<div class="card-name">${escapeHtml(p.name)}</div><div class="card-tag">${connected ? '✓ Connected' : 'FREE tier'}</div>`;
     card.addEventListener('click', () => {
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
       sidebar.classList.remove('collapsed');
       sidebar.classList.add('open');
+      syncSidebarAria();
+    });
+    card.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        card.click();
+      }
     });
     cards.appendChild(card);
   }
@@ -726,8 +907,8 @@ function appendAssistantShell(providerId = null) {
     </div>
     <div class="msg-bubble"></div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
-      <button class="msg-action-btn retry-btn">Retry</button>
+      <button type="button" class="msg-action-btn copy-btn" aria-label="Copy assistant message to clipboard">Copy</button>
+      <button type="button" class="msg-action-btn retry-btn" aria-label="Retry this assistant response">Retry</button>
     </div>`;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -750,8 +931,8 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
     </div>
     <div class="msg-bubble${isError ? ' error-bubble' : ''}">${renderMarkdown(content)}</div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
-      ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
+      <button type="button" class="msg-action-btn copy-btn" aria-label="${role === 'user' ? 'Copy your message to clipboard' : 'Copy assistant message to clipboard'}">Copy</button>
+      ${role === 'assistant' && !isAskAll ? '<button type="button" class="msg-action-btn retry-btn" aria-label="Retry this assistant response">Retry</button>' : ''}
     </div>`;
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
   wireMessageActions(div, content);
@@ -786,8 +967,10 @@ function enhanceCodeBlocks(root) {
       try { hljs.highlightElement(code); } catch {}
     }
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'copy-code-btn';
     btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code block to clipboard');
     btn.addEventListener('click', () => {
       navigator.clipboard.writeText(code?.textContent || pre.textContent);
       btn.textContent = 'Copied!';
@@ -820,7 +1003,7 @@ function appendAgentMessage(providerId, data) {
     ${traceHtml}
     <div class="msg-bubble">${renderMarkdown(data.reply || '(no reply)')}</div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
+      <button type="button" class="msg-action-btn copy-btn" aria-label="Copy assistant message to clipboard">Copy</button>
     </div>`;
 
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
@@ -887,7 +1070,7 @@ async function loadFiles() {
       return;
     }
     filesList.innerHTML = data.files.map(f =>
-      `<li><a href="${escapeAttr(f.url)}" download>${escapeHtml(f.name)}</a> <span class="file-size">${f.bytes}B</span></li>`
+      `<li><a href="${escapeAttr(f.url)}" download aria-label="Download ${escapeAttr(f.name)}">${escapeHtml(f.name)}</a> <span class="file-size">${f.bytes}B</span></li>`
     ).join('');
   } catch {
     filesList.innerHTML = '<li class="empty">Could not load</li>';
@@ -912,7 +1095,7 @@ async function loadMemory() {
         <div class="mem-meta">
           ${(e.tags || []).map(t => `<span class="mem-tag">${escapeHtml(t)}</span>`).join('')}
           ${e.importance >= 3 ? '<span class="mem-imp">★</span>' : ''}
-          <button class="icon-btn mini mem-del" data-del="${escapeAttr(e.id)}" title="Forget">×</button>
+          <button type="button" class="icon-btn mini mem-del" data-del="${escapeAttr(e.id)}" title="Forget" aria-label="Forget this memory">×</button>
         </div>
       </li>`).join('');
   } catch {
@@ -1048,7 +1231,7 @@ function renderSessions() {
   sessionsList.innerHTML = sessions.slice(0, 12).map(s => `
     <li class="${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
       <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
-      <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
+      <button type="button" class="icon-btn mini session-del" data-del="${s.id}" title="Delete" aria-label="Delete conversation ${escapeAttr(s.title || 'Untitled')}">×</button>
     </li>`).join('');
 }
 
@@ -1106,13 +1289,18 @@ function loadSettings() {
     modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     modeHint.textContent = MODE_HINTS[mode] || '';
   }
+  syncModeButtonsAriaPressed();
 }
 
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-init().then(() => { loadFiles(); loadMemory(); });
+init().then(() => {
+  loadFiles();
+  loadMemory();
+  syncSidebarAria();
+});
 // Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
 setInterval(async () => {
   try {

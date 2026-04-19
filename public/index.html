@@ -16,70 +16,82 @@
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/common.min.js"></script>
 </head>
 <body>
+  <dialog class="command-palette" id="commandPalette" aria-labelledby="commandPaletteTitle" aria-modal="true">
+    <div class="command-palette-inner">
+      <h2 class="command-palette-title" id="commandPaletteTitle">Command palette</h2>
+      <p class="command-palette-hint" id="commandPaletteHint">Type to filter. Enter to run, Escape to close.</p>
+      <input type="search" class="command-palette-search" id="commandPaletteSearch" autocomplete="off" aria-label="Search commands" placeholder="Search commands…" />
+      <ul class="command-palette-list" id="commandPaletteList" role="listbox" aria-label="Command results"></ul>
+    </div>
+  </dialog>
+
   <!-- ── Sidebar ──────────────────────────────────────────────── -->
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar" id="sidebar" aria-label="Chat settings and preferences">
     <div class="sidebar-header">
-      <button class="icon-btn sidebar-close" id="sidebarClose" title="Back to chat" aria-label="Back to chat">←</button>
+      <button class="icon-btn sidebar-close" id="sidebarClose" type="button" title="Back to chat" aria-label="Close sidebar and return to chat">←</button>
       <span class="logo">🐾 OpenClaw</span>
-      <button class="icon-btn" id="newChatBtn" title="New chat">＋</button>
+      <button class="icon-btn" id="newChatBtn" type="button" title="New chat" aria-label="Start a new chat">＋</button>
     </div>
 
     <div class="sidebar-section" id="sessionsSection">
-      <label>Conversations <button class="icon-btn mini" id="exportChatBtn" title="Export current chat as markdown">↓</button></label>
-      <ul id="sessionsList" class="sessions-list"></ul>
+      <label id="sessionsLabel">Conversations <button type="button" class="icon-btn mini" id="exportChatBtn" title="Export current chat as markdown" aria-label="Export current chat as Markdown file">↓</button></label>
+      <ul id="sessionsList" class="sessions-list" aria-labelledby="sessionsLabel"></ul>
     </div>
 
     <div class="sidebar-section">
-      <label>Chat Mode</label>
-      <div class="mode-toggle" id="modeToggle">
-        <button class="mode-btn active" data-mode="auto" title="Chat with auto-fallback between providers">💬 Chat</button>
-        <button class="mode-btn" data-mode="agent" title="AI assistant with tools: web search, file creation, email drafts">🤖 Agent</button>
-        <button class="mode-btn" data-mode="ask-all" title="Ask all configured providers at once">✦ Ask All</button>
-      </div>
+      <fieldset class="mode-fieldset">
+        <legend>Chat Mode</legend>
+        <div class="mode-toggle" id="modeToggle" role="group" aria-label="Chat mode">
+          <button type="button" class="mode-btn active" data-mode="auto" title="Chat with auto-fallback between providers" aria-pressed="true" aria-label="Chat mode: auto-fallback between providers">💬 Chat</button>
+          <button type="button" class="mode-btn" data-mode="agent" title="AI assistant with tools: web search, file creation, email drafts" aria-pressed="false" aria-label="Agent mode: tools including web search and files">🤖 Agent</button>
+          <button type="button" class="mode-btn" data-mode="ask-all" title="Ask all configured providers at once" aria-pressed="false" aria-label="Ask all mode: query every configured provider">✦ Ask All</button>
+        </div>
+      </fieldset>
       <span class="mode-hint" id="modeHint">Chat mode — tries providers in order, auto-fallback on failure</span>
     </div>
 
     <div class="sidebar-section">
-      <label>Preferred Provider</label>
-      <select id="providerSelect"></select>
+      <label for="providerSelect">Preferred Provider</label>
+      <select id="providerSelect" aria-label="Preferred AI provider"></select>
     </div>
 
     <div class="sidebar-section">
-      <label>Model</label>
-      <select id="modelSelect"></select>
+      <label for="modelSelect">Model</label>
+      <select id="modelSelect" aria-label="AI model for the selected provider"></select>
     </div>
 
     <div class="sidebar-section" id="keySection">
-      <label>API Key <span class="badge free">FREE</span></label>
+      <label for="apiKeyInput">API Key <span class="badge free">FREE</span></label>
       <div class="key-row">
-        <input type="password" id="apiKeyInput" placeholder="Paste your key…" autocomplete="off" />
-        <button class="icon-btn" id="toggleKeyBtn" title="Show/hide">👁</button>
+        <input type="password" id="apiKeyInput" placeholder="Paste your key…" autocomplete="off" aria-label="API key for the selected provider" />
+        <button type="button" class="icon-btn" id="toggleKeyBtn" title="Show or hide API key" aria-label="Show or hide API key">👁</button>
       </div>
-      <a id="getKeyLink" href="#" target="_blank" class="get-key-link">Get free key →</a>
+      <a id="getKeyLink" href="#" target="_blank" rel="noopener" class="get-key-link" aria-label="Open provider signup page to get a free API key">Get free key →</a>
     </div>
 
     <div class="sidebar-section">
-      <label>System Prompt</label>
-      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time) to complete tasks.</textarea>
+      <label for="systemPrompt">System Prompt</label>
+      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…" aria-label="System prompt sent to the model">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time) to complete tasks.</textarea>
     </div>
 
     <div class="sidebar-section" id="filesSection">
-      <label>Agent Files <button class="icon-btn mini" id="refreshFilesBtn" title="Refresh">⟳</button></label>
-      <ul id="filesList" class="files-list"><li class="empty">No files yet</li></ul>
+      <label id="filesLabel">Agent Files <button type="button" class="icon-btn mini" id="refreshFilesBtn" title="Refresh file list" aria-label="Refresh agent files list">⟳</button></label>
+      <ul id="filesList" class="files-list" aria-labelledby="filesLabel"><li class="empty">No files yet</li></ul>
     </div>
 
     <div class="sidebar-section" id="memorySection">
-      <label>
+      <label id="memoryLabel">
         Long-term Memory
-        <button class="icon-btn mini" id="refreshMemoryBtn" title="Refresh">⟳</button>
-        <button class="icon-btn mini" id="clearMemoryBtn" title="Clear all memory">✕</button>
+        <button type="button" class="icon-btn mini" id="refreshMemoryBtn" title="Refresh memories" aria-label="Refresh long-term memory list">⟳</button>
+        <button type="button" class="icon-btn mini" id="clearMemoryBtn" title="Clear all memory" aria-label="Clear all stored memories">✕</button>
       </label>
-      <ul id="memoryList" class="memory-list"><li class="empty">No memories yet</li></ul>
+      <ul id="memoryList" class="memory-list" aria-labelledby="memoryLabel"><li class="empty">No memories yet</li></ul>
     </div>
 
     <div class="sidebar-section">
-      <label>Temperature: <span id="tempVal">0.7</span></label>
-      <input type="range" id="tempRange" min="0" max="2" step="0.1" value="0.7" />
+      <label for="tempRange">Temperature: <span id="tempVal">0.7</span></label>
+      <span id="tempHint" class="visually-hidden">Lower = more focused and deterministic. Higher = more creative.</span>
+      <input type="range" id="tempRange" min="0" max="2" step="0.1" value="0.7" title="Lower = more focused &amp; deterministic. Higher = more creative" aria-describedby="tempHint" aria-label="Response temperature" />
     </div>
 
     <div class="sidebar-footer">
@@ -89,12 +101,12 @@
   </aside>
 
   <!-- ── Main chat area ───────────────────────────────────────── -->
-  <main class="main">
+  <main class="main" role="main">
     <header class="topbar">
-      <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
+      <button type="button" class="icon-btn" id="sidebarToggle" title="Toggle sidebar" aria-label="Toggle settings sidebar" aria-expanded="true" aria-controls="sidebar">☰</button>
       <span class="topbar-title">OpenClaw</span>
-      <span class="provider-pill" id="activePill"></span>
-      <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
+      <span class="provider-pill" id="activePill" aria-live="polite" aria-atomic="true"></span>
+      <button type="button" class="icon-btn" id="clearBtn" title="Clear chat" aria-label="Clear conversation">🗑</button>
     </header>
 
     <div class="messages" id="messages">
@@ -103,33 +115,34 @@
         <h1>OpenClaw</h1>
         <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
         <div class="provider-cards" id="providerCards"></div>
-        <div class="quick-prompts">
-          <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
-          <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+        <div class="quick-prompts" role="group" aria-label="Example prompts">
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories." aria-label="Example: search the web and summarize AI news">🔎 Search web + summarize</button>
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today." aria-label="Example: create a checklist file">📝 Create a file</button>
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue." aria-label="Example: draft a support email">✉️ Draft an email</button>
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style." aria-label="Example: generate a painterly cabin image">🎨 Generate an image</button>
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work." aria-label="Example: mortgage payment calculation">🧮 Do a calculation</button>
+          <button type="button" class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old." aria-label="Example: simple quantum computing explanation">💡 Explain something</button>
         </div>
         <p class="tip" id="welcomeTip"><strong>🎉 No API key required.</strong> If you have <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> running locally, OpenClaw will auto-connect and keep everything private on your machine. Otherwise the free keyless Pollinations provider kicks in. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
       </div>
     </div>
 
-    <form class="input-area" id="chatForm">
-      <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach file">📎</button>
-      <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.js,.py,.html,.css,.json,.csv,image/*" />
-      <button type="button" class="icon-btn mic-btn" id="micBtn" title="Voice input (hold or click)" hidden>🎙</button>
+    <form class="input-area" id="chatForm" aria-label="Send a message">
+      <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach file" aria-label="Attach a file to your message">📎</button>
+      <input type="file" id="fileInput" hidden accept=".txt,.md,.js,.py,.html,.css,.json,.csv,image/*" aria-label="Choose file to attach" />
+      <button type="button" class="icon-btn mic-btn" id="micBtn" title="Voice input (hold or click)" aria-label="Voice input" hidden>🎙</button>
       <textarea
         id="userInput"
         placeholder="Ask anything… (Shift+Enter for new line, type / for commands)"
         rows="1"
         autocomplete="off"
+        aria-label="Message text"
       ></textarea>
-      <div class="slash-menu" id="slashMenu" hidden></div>
-      <button type="button" class="send-btn stop-btn" id="stopBtn" title="Stop" style="display:none">■</button>
-      <button type="submit" class="send-btn" id="sendBtn" title="Send">
-        <span id="sendIcon">➤</span>
-        <span id="loadingIcon" style="display:none">⏳</span>
+      <div class="slash-menu" id="slashMenu" role="listbox" aria-label="Slash commands" hidden></div>
+      <button type="button" class="send-btn stop-btn" id="stopBtn" title="Stop generation" style="display:none" aria-label="Stop generation">■</button>
+      <button type="submit" class="send-btn" id="sendBtn" title="Send message" aria-label="Send message">
+        <span id="sendIcon" aria-hidden="true">➤</span>
+        <span id="loadingIcon" style="display:none" aria-hidden="true">⏳</span>
       </button>
     </form>
 
