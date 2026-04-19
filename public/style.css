@@ -317,6 +317,131 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   text-transform: uppercase;
 }
 
+/* Live agent panel: thinking banner + inline typing + tool artifacts */
+.agent-live-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.agent-thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.agent-thinking-banner {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--accent2);
+  line-height: 1.45;
+  font-family: 'Consolas', 'Fira Code', ui-monospace, monospace;
+  word-break: break-word;
+}
+.agent-typing-inline {
+  flex-shrink: 0;
+}
+.agent-typing-inline .typing-bubble {
+  padding: 8px 12px;
+}
+.agent-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agent-artifact {
+  background: linear-gradient(145deg, rgba(108, 99, 255, 0.08), rgba(26, 29, 39, 0.95));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.agent-artifact.artifact-enter-active {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.artifact-head {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.artifact-head code {
+  color: var(--accent2);
+  background: rgba(167, 139, 250, 0.12);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.85em;
+}
+.artifact-args {
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+  margin-bottom: 8px;
+}
+.artifact-results {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.artifact-results li {
+  padding: 8px 0;
+  border-top: 1px dashed var(--border);
+}
+.artifact-results li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.artifact-results a {
+  color: var(--accent2);
+  text-decoration: none;
+  font-weight: 600;
+}
+.artifact-snippet {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.artifact-file a {
+  color: var(--success);
+  text-decoration: none;
+  font-weight: 600;
+}
+.artifact-image img {
+  max-width: 100%;
+  border-radius: 8px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+}
+.artifact-error {
+  color: var(--error);
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+.artifact-json {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+  margin: 0;
+}
+.message.agent-live .agent-reply.msg-bubble {
+  margin-top: 4px;
+}
+
 .trace {
   margin: 8px 0;
   background: var(--surface2);

@@ -1,4 +1,4 @@
-/* ── CloudClaw frontend app ──────────────────────────────────────────── */
+/* ── OpenClaw frontend app ──────────────────────────────────────────── */
 
 const API = '';  // same-origin; set full URL if backend is separate
 
@@ -77,6 +77,62 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 function escapeAttr(s) { return escapeHtml(s); }
+
+function safeJsonStringify(obj, space) {
+  try { return JSON.stringify(obj, null, space); } catch { return String(obj); }
+}
+
+/** One-line params for the live "Thinking: running tool(…)" banner (exact JSON when small). */
+function formatToolParamsShort(args, rawArguments) {
+  if (!args || typeof args !== 'object') {
+    const raw = rawArguments != null ? String(rawArguments) : '';
+    return raw.length > 220 ? `${raw.slice(0, 220)}…` : raw;
+  }
+  if (args.__parse_error) {
+    const raw = rawArguments != null ? String(rawArguments) : '';
+    return raw.length > 220 ? `${raw.slice(0, 220)}…` : raw;
+  }
+  let s;
+  try { s = JSON.stringify(args); } catch { s = String(args); }
+  if (s.length > 240) return `${s.slice(0, 240)}…`;
+  return s;
+}
+
+function typingDotsHtml() {
+  return '<div class="typing-bubble"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>';
+}
+
+/** Parse text/event-stream from a ReadableStreamDefaultReader. */
+async function readEventStream(reader, decoder, onEvent) {
+  let buf = '';
+  const dispatchBlock = async block => {
+    const trimmed = block.trim();
+    if (!trimmed) return;
+    let event = 'message';
+    let data = '';
+    for (const line of trimmed.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) data += line.slice(5).trim();
+    }
+    if (!data) return;
+    try {
+      const payload = JSON.parse(data);
+      await onEvent(event, payload);
+    } catch { /* ignore malformed */ }
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      await dispatchBlock(block);
+    }
+  }
+  if (buf.trim()) await dispatchBlock(buf);
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -269,6 +325,21 @@ async function streamChat(id, key, msgs, name) {
 
   let buffer = '';
   let hadAny = false;
+  let streamRaf = null;
+  const flushStreamBubble = () => {
+    streamRaf = null;
+    if (buffer) {
+      if (!hadAny) {
+        bodyEl.innerHTML = '';
+        hadAny = true;
+      }
+      bodyEl.innerHTML = renderMarkdown(buffer) + '<span class="cursor">▋</span>';
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  };
+  const scheduleStreamBubble = () => {
+    if (streamRaf == null) streamRaf = requestAnimationFrame(flushStreamBubble);
+  };
 
   try {
     const res = await fetch(`${API}/api/chat/stream`, {
@@ -318,10 +389,10 @@ async function streamChat(id, key, msgs, name) {
           const obj = JSON.parse(data);
           if (event === 'delta' && obj.content) {
             buffer += obj.content;
-            if (!hadAny) { bodyEl.innerHTML = ''; hadAny = true; }
-            bodyEl.innerHTML = renderMarkdown(buffer) + '<span class="cursor">▋</span>';
-            messagesEl.scrollTop = messagesEl.scrollHeight;
+            scheduleStreamBubble();
           } else if (event === 'done') {
+            if (streamRaf != null) cancelAnimationFrame(streamRaf);
+            streamRaf = null;
             // final render without cursor
             bodyEl.innerHTML = renderMarkdown(buffer);
             enhanceCodeBlocks(bodyEl);
@@ -342,6 +413,8 @@ async function streamChat(id, key, msgs, name) {
 
     // stream ended without "done" event
     if (buffer) {
+      if (streamRaf != null) cancelAnimationFrame(streamRaf);
+      streamRaf = null;
       bodyEl.innerHTML = renderMarkdown(buffer);
       enhanceCodeBlocks(bodyEl);
       bodyEl.classList.remove('streaming');
@@ -353,6 +426,8 @@ async function streamChat(id, key, msgs, name) {
     bubble.remove();
     return false;
   } catch (err) {
+    if (streamRaf != null) cancelAnimationFrame(streamRaf);
+    streamRaf = null;
     if (err.name === 'AbortError') {
       bodyEl.innerHTML = renderMarkdown(buffer || '_(stopped)_');
       enhanceCodeBlocks(bodyEl);
@@ -371,7 +446,143 @@ async function streamChat(id, key, msgs, name) {
   }
 }
 
-// ── Agent mode ────────────────────────────────────────────────────────────
+// ── Agent mode (SSE: thinking line, tool artifacts, streamed final reply) ─
+function appendAgentShell(providerId) {
+  removeWelcome();
+  const div = document.createElement('div');
+  div.className = 'message assistant agent-live';
+  const name = providers[providerId]?.name || 'AI';
+  div.innerHTML = `
+    <div class="msg-meta">
+      <span class="msg-avatar">🤖</span>
+      <strong>${escapeHtml(name)}</strong>
+      <span class="agent-badge">agent</span>
+      <span>${timestamp()}</span>
+    </div>
+    <div class="agent-live-panel">
+      <div class="agent-thinking-row">
+        <div class="agent-thinking-banner" aria-live="polite"></div>
+        <div class="agent-typing-inline">${typingDotsHtml()}</div>
+      </div>
+      <div class="agent-tools"></div>
+      <div class="msg-bubble agent-reply streaming" style="display:none"></div>
+    </div>
+    <div class="msg-actions">
+      <button class="msg-action-btn copy-btn" disabled>Copy</button>
+      <button class="msg-action-btn retry-btn">Retry</button>
+    </div>`;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+/** Same rich summaries as trace items, wrapped for inline agent artifacts. */
+function renderAgentArtifactBody(item) {
+  const { tool, args, result, step } = item;
+  const argStr = safeJsonStringify(args, 2);
+  let summary = '';
+  if (tool === 'web_search' && result?.results?.length) {
+    summary = `<ul class="artifact-results">${result.results.map(r =>
+      `<li><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a><div class="artifact-snippet">${escapeHtml(r.snippet || '')}</div></li>`
+    ).join('')}</ul>`;
+  } else if (tool === 'fetch_url') {
+    summary = `<div class="artifact-snippet">Fetched ${escapeHtml(result?.url || '')} (${result?.length || 0} chars)</div>`;
+  } else if (tool === 'create_file' && result?.download_url) {
+    summary = `<div class="artifact-file">📄 <a href="${escapeAttr(result.download_url)}" download>${escapeHtml(result.filename)}</a> (${result.bytes} bytes)</div>`;
+  } else if (tool === 'draft_email' && result?.mailto_link) {
+    summary = `<div class="artifact-file">✉️ <a href="${escapeAttr(result.mailto_link)}">Open draft to ${escapeHtml(result.to)}</a></div>`;
+  } else if (tool === 'generate_image' && result?.image_url) {
+    summary = `<div class="artifact-image"><img src="${escapeAttr(result.image_url)}" alt="${escapeAttr(result.prompt || '')}" loading="lazy" /><div class="artifact-snippet">${escapeHtml(result.prompt || '')}</div></div>`;
+  } else if (tool === 'calculate' && typeof result?.result === 'number') {
+    summary = `<div class="artifact-snippet">Result: <strong>${escapeHtml(String(result.result))}</strong></div>`;
+  } else if (tool === 'remember' && result?.id) {
+    summary = `<div class="artifact-snippet">💾 Saved to memory: <em>${escapeHtml(result.text)}</em></div>`;
+  } else if (tool === 'recall' && result?.matches) {
+    summary = result.matches.length
+      ? `<ul class="artifact-results">${result.matches.map(m => `<li><em>${escapeHtml(m.text)}</em></li>`).join('')}</ul>`
+      : `<div class="artifact-snippet">No relevant memories found.</div>`;
+  } else if (tool === 'final_answer') {
+    summary = '';
+  } else if (tool === 'read_file' && result?.filename) {
+    summary = `<div class="artifact-snippet">📖 Read ${escapeHtml(result.filename)} (${result.length} chars)</div>`;
+  } else if (tool === 'current_time' && result?.iso) {
+    summary = `<div class="artifact-snippet">${escapeHtml(result.utc || result.iso)}</div>`;
+  } else if (result?.error) {
+    summary = `<div class="artifact-error">Error: ${escapeHtml(result.error)}</div>`;
+  } else {
+    const raw = safeJsonStringify(result, 2);
+    summary = `<pre class="artifact-json">${escapeHtml(raw.length > 4000 ? `${raw.slice(0, 4000)}\n…` : raw)}</pre>`;
+  }
+  return `
+    <header class="artifact-head">Step ${step}: <code>${escapeHtml(tool)}</code></header>
+    <pre class="artifact-args">${escapeHtml(argStr)}</pre>
+    ${summary}`;
+}
+
+function mountAgentArtifact(toolsHost, item) {
+  const article = document.createElement('article');
+  article.className = 'agent-artifact artifact-enter';
+  article.innerHTML = renderAgentArtifactBody(item);
+  toolsHost.appendChild(article);
+  requestAnimationFrame(() => {
+    article.classList.add('artifact-enter-active');
+  });
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+/**
+ * Reveal the final markdown in small steps for a token-like feel (full text is known).
+ * Returns a cancel function.
+ */
+/** @returns {Promise<{ text: string, aborted: boolean }>} */
+function streamReplyText(element, fullText, { signal } = {}) {
+  const full = String(fullText ?? '');
+  let i = 0;
+  let raf = null;
+  let cancelled = false;
+  const charsPerFrame = full.length ? Math.max(2, Math.ceil(full.length / 400)) : 0;
+
+  return new Promise(resolve => {
+    const finish = () => {
+      element.classList.remove('streaming');
+      element.innerHTML = renderMarkdown(full);
+      enhanceCodeBlocks(element);
+      resolve({ text: full, aborted: false });
+    };
+
+    const tick = () => {
+      if (cancelled) return;
+      if (signal?.aborted) {
+        cancelled = true;
+        element.classList.remove('streaming');
+        const partial = full.slice(0, i);
+        element.innerHTML = renderMarkdown(partial);
+        enhanceCodeBlocks(element);
+        resolve({ text: partial, aborted: true });
+        return;
+      }
+      if (!full.length) {
+        cancelled = true;
+        finish();
+        return;
+      }
+      i = Math.min(full.length, i + charsPerFrame);
+      const slice = full.slice(0, i);
+      element.innerHTML = renderMarkdown(slice) + (i < full.length ? '<span class="cursor">▋</span>' : '');
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (i < full.length) raf = requestAnimationFrame(tick);
+      else {
+        cancelled = true;
+        finish();
+      }
+    };
+
+    element.style.display = '';
+    element.classList.add('streaming');
+    raf = requestAnimationFrame(tick);
+  });
+}
+
 async function sendAgent(msgs) {
   const available = getAvailableProviders({ toolsOnly: true });
   if (available.length === 0) {
@@ -380,12 +591,33 @@ async function sendAgent(msgs) {
   }
   const { id, key } = available[0];
   const name = providers[id].name;
-  const typingId = appendTyping(`${name} (Agent)`);
+  const bubble = appendAgentShell(id);
+  const thinkingBanner = bubble.querySelector('.agent-thinking-banner');
+  const typingInline = bubble.querySelector('.agent-typing-inline');
+  const toolsHost = bubble.querySelector('.agent-tools');
+  const replyEl = bubble.querySelector('.agent-reply');
+  const thinkingRow = bubble.querySelector('.agent-thinking-row');
+
   currentController = new AbortController();
+  const signal = currentController.signal;
   setLoading(true, true);
 
+  const setThinkingToolLine = (tool, args, rawArguments) => {
+    const params = formatToolParamsShort(args, rawArguments);
+    const tail = params ? ` ${params}` : '';
+    thinkingBanner.textContent = `Thinking: running ${tool}${tail}`;
+    typingInline.style.display = '';
+  };
+
+  const setThinkingLlmLine = (step, wrapUp) => {
+    thinkingBanner.textContent = wrapUp
+      ? 'Thinking (finishing up)…'
+      : `Thinking (step ${step})…`;
+    typingInline.style.display = '';
+  };
+
   try {
-    const res = await fetch(`${API}/api/agent`, {
+    const res = await fetch(`${API}/api/agent/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -398,29 +630,73 @@ async function sendAgent(msgs) {
         ],
         maxSteps: 6,
       }),
-      signal: currentController.signal,
+      signal,
     });
-    const data = await res.json();
-    removeTyping(typingId);
-    if (!res.ok || data.error) {
-      appendMessage('assistant', `Agent error: ${data.error || res.statusText}`, true, id);
+
+    if (!res.ok || !res.body) {
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const d = await res.json();
+        errMsg = d.error || errMsg;
+      } catch { /* use errMsg */ }
+      bubble.remove();
+      appendMessage('assistant', `Agent error: ${errMsg}`, true, id);
       setStatus('error', 'Agent failed');
       return;
     }
-    appendAgentMessage(id, data);
-    messages.push({ role: 'assistant', content: data.reply || '' });
-    setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let donePayload = null;
+
+    await readEventStream(reader, decoder, async (event, data) => {
+      if (event === 'agent_started') {
+        thinkingBanner.textContent = 'Connecting…';
+      } else if (event === 'thinking_llm') {
+        setThinkingLlmLine(data.step, data.wrapUp);
+      } else if (event === 'thinking_tool') {
+        setThinkingToolLine(data.tool, data.args, data.rawArguments);
+      } else if (event === 'tool_result') {
+        if (data.tool && data.tool !== 'final_answer') {
+          mountAgentArtifact(toolsHost, data);
+        }
+        thinkingBanner.textContent = '';
+      } else if (event === 'done') {
+        donePayload = data;
+      } else if (event === 'error') {
+        throw new Error(data.message || 'Agent stream error');
+      }
+    });
+
+    if (!donePayload) {
+      bubble.remove();
+      appendMessage('assistant', 'Agent stream ended unexpectedly.', true, id);
+      setStatus('error', 'Agent failed');
+      return;
+    }
+
+    const reply = donePayload.reply || '';
+    const steps = donePayload.steps | 0;
+    if (thinkingRow) thinkingRow.style.display = 'none';
+
+    const { text: shownReply, aborted: replyAborted } = await streamReplyText(replyEl, reply, { signal });
+
+    bubble.querySelector('.copy-btn')?.removeAttribute('disabled');
+    wireMessageActions(bubble, shownReply);
+    messages.push({ role: 'assistant', content: shownReply });
+    setStatus('online', replyAborted ? 'Stopped' : `${name} answered (${steps} step${steps === 1 ? '' : 's'})`);
     activePill.textContent = `🤖 ${name}`;
     activePill.className = 'provider-pill online';
     saveCurrentSession();
     loadFiles();
   } catch (err) {
-    removeTyping(typingId);
-    if (err.name !== 'AbortError') {
+    if (err.name === 'AbortError') {
+      setStatus('online', 'Stopped');
+      if (bubble.parentNode) bubble.remove();
+    } else {
+      if (bubble.parentNode) bubble.remove();
       appendMessage('assistant', `Agent error: ${err.message}`, true);
       setStatus('error', 'Agent failed');
-    } else {
-      setStatus('online', 'Stopped');
     }
   } finally {
     currentController = null;
@@ -1267,9 +1543,9 @@ sessionsList?.addEventListener('click', e => {
 function exportChat() {
   if (messages.length === 0) return;
   const title = sessionTitle(messages);
-  const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
+  const md = `# ${title}\n\n*Exported from OpenClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
-      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
+      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**OpenClaw**' : `**${m.role}**`;
       return `### ${who}\n\n${m.content}\n`;
     }).join('\n');
   const blob = new Blob([md], { type: 'text/markdown' });
