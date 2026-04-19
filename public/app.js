@@ -210,8 +210,9 @@ function restoreProvider() {
   const saved = localStorage.getItem('cc_provider');
   const firstAvailable = getAvailableProviders()[0]?.id;
   const savedOk = saved && providers[saved] && !isProviderSkipped(saved);
-  const anyId = orderedProviderIds()[0];
-  const target = savedOk ? saved : (firstAvailable || anyId);
+  const ids = orderedProviderIds();
+  const firstNotSkipped = ids.find(id => !isProviderSkipped(id));
+  const target = savedOk ? saved : (firstAvailable || firstNotSkipped || ids[0]);
   if (target) providerSelect.value = target;
   if (headerProviderSelect && target) headerProviderSelect.value = target;
   providerSelect.dispatchEvent(new Event('change'));
