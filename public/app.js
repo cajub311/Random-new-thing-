@@ -877,13 +877,70 @@ function renderTraceItem(item) {
     </div>`;
 }
 
+const FILES_EMPTY_HTML = `<li class="empty empty-state" aria-live="polite">
+        <p class="empty-state-lead">No files yet. Upload files or switch to Agent mode — it can create and edit files for you.</p>
+        <div class="empty-state-actions">
+          <button type="button" class="empty-state-btn" data-empty-action="upload">Upload</button>
+          <button type="button" class="empty-state-btn primary" data-empty-action="agent">Agent mode</button>
+        </div>
+        <p class="empty-state-hint"><span class="empty-state-hint-label">Get started</span> <button type="button" class="empty-state-link" data-empty-action="example-file">Try: create a file →</button></p>
+      </li>`;
+
+const MEMORY_EMPTY_HTML = `<li class="empty empty-state" aria-live="polite">
+        <p class="empty-state-lead">Memories appear here automatically. Ask the agent to remember things across chats.</p>
+        <div class="empty-state-actions">
+          <button type="button" class="empty-state-btn primary" data-empty-action="agent">Agent mode</button>
+        </div>
+        <p class="empty-state-hint"><span class="empty-state-hint-label">Get started</span> <button type="button" class="empty-state-link" data-empty-action="example-memory">Example: &quot;remember this&quot; →</button></p>
+      </li>`;
+
+const EMPTY_EXAMPLE_FILE_PROMPT = 'Create a file called notes.md with a short markdown checklist of 5 things to do today.';
+const EMPTY_EXAMPLE_MEMORY_PROMPT = 'Remember for future chats: my preferred meeting window is mornings (9–12 local time).';
+
+function openSidebarForInput() {
+  sidebar.classList.remove('collapsed');
+  sidebar.classList.add('open');
+}
+
+sidebar.addEventListener('click', e => {
+  const btn = e.target.closest('[data-empty-action]');
+  if (!btn) return;
+  const action = btn.dataset.emptyAction;
+  if (action === 'upload') {
+    fileInput?.click();
+    openSidebarForInput();
+    return;
+  }
+  if (action === 'agent') {
+    setChatMode('agent');
+    openSidebarForInput();
+    userInput.focus();
+    return;
+  }
+  if (action === 'example-file') {
+    setChatMode('agent');
+    userInput.value = EMPTY_EXAMPLE_FILE_PROMPT;
+    userInput.dispatchEvent(new Event('input'));
+    openSidebarForInput();
+    userInput.focus();
+    return;
+  }
+  if (action === 'example-memory') {
+    setChatMode('agent');
+    userInput.value = EMPTY_EXAMPLE_MEMORY_PROMPT;
+    userInput.dispatchEvent(new Event('input'));
+    openSidebarForInput();
+    userInput.focus();
+  }
+});
+
 async function loadFiles() {
   if (!filesList) return;
   try {
     const res = await fetch(`${API}/api/files`);
     const data = await res.json();
     if (!data.files || data.files.length === 0) {
-      filesList.innerHTML = '<li class="empty">No files yet</li>';
+      filesList.innerHTML = FILES_EMPTY_HTML;
       return;
     }
     filesList.innerHTML = data.files.map(f =>
@@ -903,7 +960,7 @@ async function loadMemory() {
     const res = await fetch(`${API}/api/memory`);
     const data = await res.json();
     if (!data.entries || data.entries.length === 0) {
-      memoryList.innerHTML = '<li class="empty">No memories yet</li>';
+      memoryList.innerHTML = MEMORY_EMPTY_HTML;
       return;
     }
     memoryList.innerHTML = data.entries.slice(0, 40).map(e => `

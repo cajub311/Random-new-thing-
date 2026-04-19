@@ -65,7 +65,14 @@
 
     <div class="sidebar-section" id="filesSection">
       <label>Agent Files <button class="icon-btn mini" id="refreshFilesBtn" title="Refresh">⟳</button></label>
-      <ul id="filesList" class="files-list"><li class="empty">No files yet</li></ul>
+      <ul id="filesList" class="files-list"><li class="empty empty-state" aria-live="polite">
+        <p class="empty-state-lead">No files yet. Upload files or switch to Agent mode — it can create and edit files for you.</p>
+        <div class="empty-state-actions">
+          <button type="button" class="empty-state-btn" data-empty-action="upload">Upload</button>
+          <button type="button" class="empty-state-btn primary" data-empty-action="agent">Agent mode</button>
+        </div>
+        <p class="empty-state-hint"><span class="empty-state-hint-label">Get started</span> <button type="button" class="empty-state-link" data-empty-action="example-file">Try: create a file →</button></p>
+      </li></ul>
     </div>
 
     <div class="sidebar-section" id="memorySection">
@@ -74,7 +81,13 @@
         <button class="icon-btn mini" id="refreshMemoryBtn" title="Refresh">⟳</button>
         <button class="icon-btn mini" id="clearMemoryBtn" title="Clear all memory">✕</button>
       </label>
-      <ul id="memoryList" class="memory-list"><li class="empty">No memories yet</li></ul>
+      <ul id="memoryList" class="memory-list"><li class="empty empty-state" aria-live="polite">
+        <p class="empty-state-lead">Memories appear here automatically. Ask the agent to remember things across chats.</p>
+        <div class="empty-state-actions">
+          <button type="button" class="empty-state-btn primary" data-empty-action="agent">Agent mode</button>
+        </div>
+        <p class="empty-state-hint"><span class="empty-state-hint-label">Get started</span> <button type="button" class="empty-state-link" data-empty-action="example-memory">Example: &quot;remember this&quot; →</button></p>
+      </li></ul>
     </div>
 
     <div class="sidebar-section">
