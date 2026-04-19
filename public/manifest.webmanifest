@@ -1,7 +1,7 @@
 {
   "name": "OpenClaw",
   "short_name": "OpenClaw",
-  "description": "Free, local-first, open-source AI assistant.",
+  "description": "Chat, search, generate images and files with Ollama or free cloud. No API key. Fully private.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
