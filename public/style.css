@@ -132,7 +132,62 @@ input[type="range"]:hover::-moz-range-thumb {
   padding: 12px 20px; border-bottom: 1px solid var(--border);
   background: var(--surface); flex-shrink: 0;
 }
-.topbar-title { flex: 1; font-weight: 600; font-size: 0.95rem; color: var(--text); }
+.topbar-title { flex: 1; font-weight: 600; font-size: 0.95rem; color: var(--text); min-width: 0; }
+
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.topbar-mode {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface2);
+}
+.topbar-mode-btn {
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  cursor: pointer;
+  line-height: 1;
+  transition: background var(--transition-slow), color var(--transition-slow), transform var(--transition-slow);
+  font-family: inherit;
+}
+.topbar-mode-btn + .topbar-mode-btn { border-left: 1px solid var(--border); }
+.topbar-mode-btn:hover:not(.active) { background: var(--surface); color: var(--text); }
+.topbar-mode-btn.active { background: var(--accent); color: #fff; }
+.topbar-mode-btn:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; z-index: 1; }
+
+.topbar-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--accent2);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--transition-slow), border-color var(--transition-slow), color var(--transition-slow), transform var(--transition-slow), box-shadow var(--transition-slow);
+}
+.topbar-github:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
 
 /* ── Buttons ─────────────────────────────────────────────────────────── */
 .icon-btn {
@@ -183,6 +238,21 @@ input[type="range"]:hover::-moz-range-thumb {
 
 .welcome { text-align: center; max-width: 600px; margin: auto; }
 .welcome-icon { font-size: 4rem; margin-bottom: 16px; }
+
+.trust-bar {
+  display: inline-block;
+  margin: 0 auto 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  line-height: 1.45;
+  max-width: 100%;
+}
 .welcome h1 { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 .welcome p { color: var(--text-muted); margin: 10px 0; line-height: 1.6; }
 .tip { font-size: 0.85rem; }
@@ -312,7 +382,38 @@ input[type="range"]:hover::-moz-range-thumb {
 }
 #userInput::placeholder { color: var(--text-muted); }
 
-.disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-muted); padding: 4px 20px 10px; }
+.site-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 20px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-muted); margin: 0; max-width: 520px; }
+
+.footer-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent2);
+  text-decoration: none;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  transition: background var(--transition-slow), border-color var(--transition-slow), color var(--transition-slow), transform var(--transition-slow);
+}
+.footer-github:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.footer-github .octocat { flex-shrink: 0; opacity: 0.9; }
 
 /* ── Mode toggle ─────────────────────────────────────────────────────── */
 .mode-toggle { display: flex; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 6px; }
@@ -368,6 +469,8 @@ input[type="range"]:hover::-moz-range-thumb {
   .sidebar-close { display: inline-flex; }
   .topbar-title { font-size: 0.85rem; }
   .welcome h1 { font-size: 1.4rem; }
+  .topbar-github { font-size: 0.72rem; padding: 5px 8px; }
+  .trust-bar { font-size: 0.7rem; padding: 6px 10px; }
 }
 
 /* ── Agent mode additions ─────────────────────────────────────────────── */

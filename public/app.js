@@ -1,4 +1,4 @@
-/* ── CloudClaw frontend app ──────────────────────────────────────────── */
+/* ── OpenClaw frontend app ─────────────────────────────────────────────── */
 
 const API = '';  // same-origin; set full URL if backend is separate
 
@@ -192,10 +192,18 @@ modeToggle.addEventListener('click', e => {
   if (!btn) return;
   setChatMode(btn.dataset.mode);
 });
+
+document.getElementById('topbarModeToggle')?.addEventListener('click', e => {
+  const btn = e.target.closest('.topbar-mode-btn');
+  if (!btn) return;
+  setChatMode(btn.dataset.mode);
+});
 function setChatMode(mode) {
   chatMode = mode;
   modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  document.querySelectorAll('#topbarModeToggle .topbar-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   syncModeButtonsAriaPressed();
+  syncTopbarModeAriaPressed();
   modeHint.textContent = MODE_HINTS[mode] || '';
   updateStatus();
   localStorage.setItem('cc_mode', mode);
@@ -204,6 +212,12 @@ function setChatMode(mode) {
 
 function syncModeButtonsAriaPressed() {
   modeToggle.querySelectorAll('.mode-btn').forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.mode === chatMode ? 'true' : 'false');
+  });
+}
+
+function syncTopbarModeAriaPressed() {
+  document.querySelectorAll('#topbarModeToggle .topbar-mode-btn').forEach(b => {
     b.setAttribute('aria-pressed', b.dataset.mode === chatMode ? 'true' : 'false');
   });
 }
@@ -856,6 +870,7 @@ function showWelcome() {
     <div class="welcome">
       <div class="welcome-icon">🐾</div>
       <h1>OpenClaw</h1>
+      <p class="trust-bar" role="status">⭐ 100% Open Source • 🔒 Local-First • 🔄 Free Cloud Fallback • 🛡️ No data stored</p>
       <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
       <div class="provider-cards" id="providerCardsWelcome"></div>
       <div class="quick-prompts" role="group" aria-label="Example prompts">
@@ -1261,9 +1276,9 @@ sessionsList?.addEventListener('click', e => {
 function exportChat() {
   if (messages.length === 0) return;
   const title = sessionTitle(messages);
-  const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
+  const md = `# ${title}\n\n*Exported from OpenClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
-      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
+      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**OpenClaw**' : `**${m.role}**`;
       return `### ${who}\n\n${m.content}\n`;
     }).join('\n');
   const blob = new Blob([md], { type: 'text/markdown' });
@@ -1290,6 +1305,7 @@ function loadSettings() {
     modeHint.textContent = MODE_HINTS[mode] || '';
   }
   syncModeButtonsAriaPressed();
+  syncTopbarModeAriaPressed();
 }
 
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
