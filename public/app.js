@@ -14,9 +14,15 @@ let currentSessionId = null;
 let lastFailedProviderId = null; // last backend that errored — status pill / “Turn off” targets this
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
-const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
+const PROVIDER_ORDER = [
+  'ollama', 'lmstudio', 'llamacpp', 'pollinations',
+  'groq', 'cerebras', 'openrouter', 'gemini', 'together', 'xai', 'anthropic',
+  'deepseek', 'cohere', 'huggingface',
+];
 
 const PROVIDER_SKIP_KEY = 'cc_provider_skip_ids';
+const MODEL_ALLOW_PREFIX = 'cc_models_allowed_'; // JSON array per provider; empty = all models
+const ASK_ALL_IDS_KEY = 'cc_ask_all_provider_ids'; // JSON array; absent = use all available
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -58,6 +64,8 @@ const clearMemoryBtn = document.getElementById('clearMemoryBtn');
 const headerProviderSelect = document.getElementById('headerProviderSelect');
 const providerSkipList = document.getElementById('providerSkipList');
 const resetProviderSkips = document.getElementById('resetProviderSkips');
+const modelAllowWrap = document.getElementById('modelAllowWrap');
+const askAllProviderList = document.getElementById('askAllProviderList');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -112,6 +120,152 @@ function toggleProviderSkipped(id, skipped) {
   if (skipped) s.add(id);
   else s.delete(id);
   setSkippedProviderIds(s);
+}
+
+function getModelsAllowedSet(providerId) {
+  const p = providers[providerId];
+  if (!p?.models?.length) return null;
+  try {
+    const raw = localStorage.getItem(MODEL_ALLOW_PREFIX + providerId);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return null;
+    const allowed = new Set(arr.filter(m => typeof m === 'string' && p.models.includes(m)));
+    if (allowed.size === 0) return null;
+    return allowed;
+  } catch {
+    return null;
+  }
+}
+
+function persistModelsAllowed(providerId, setOrNull) {
+  const p = providers[providerId];
+  if (!p?.models?.length) return;
+  const key = MODEL_ALLOW_PREFIX + providerId;
+  if (!setOrNull || setOrNull.size === 0 || setOrNull.size >= p.models.length) {
+    try { localStorage.removeItem(key); } catch {}
+    return;
+  }
+  try { localStorage.setItem(key, JSON.stringify([...setOrNull])); } catch {}
+}
+
+function getEffectiveModelForProvider(providerId) {
+  const p = providers[providerId];
+  if (!p?.models?.length) return p?.defaultModel || '';
+  const allowed = getModelsAllowedSet(providerId);
+  const preferred = providerSelect.value === providerId ? modelSelect.value : null;
+  if (!allowed) return preferred && p.models.includes(preferred) ? preferred : p.defaultModel;
+  if (preferred && allowed.has(preferred)) return preferred;
+  for (const m of p.models) if (allowed.has(m)) return m;
+  return p.defaultModel;
+}
+
+function renderModelAllowList() {
+  if (!modelAllowWrap) return;
+  const id = providerSelect.value;
+  const p = providers[id];
+  if (!p?.models?.length) {
+    modelAllowWrap.innerHTML = '';
+    modelAllowWrap.hidden = true;
+    return;
+  }
+  modelAllowWrap.hidden = false;
+  const allowed = getModelsAllowedSet(id);
+  const allOn = !allowed || allowed.size >= p.models.length;
+  modelAllowWrap.innerHTML = p.models.map(m => {
+    const on = allOn || (allowed && allowed.has(m));
+    return `<label class="model-allow-item"><input type="checkbox" class="model-allow-cb" data-model="${escapeAttr(m)}" ${on ? 'checked' : ''} /><span>${escapeHtml(m)}</span></label>`;
+  }).join('');
+}
+
+function refreshModelSelectOptions() {
+  const id = providerSelect.value;
+  const p = providers[id];
+  if (!p?.models?.length) return;
+  const allowed = getModelsAllowedSet(id);
+  const prev = modelSelect.value;
+  modelSelect.innerHTML = '';
+  const list = (!allowed || allowed.size >= p.models.length) ? p.models : p.models.filter(m => allowed.has(m));
+  for (const m of list) {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    modelSelect.appendChild(opt);
+  }
+  if (list.includes(prev)) modelSelect.value = prev;
+  else if (list.includes(p.defaultModel)) modelSelect.value = p.defaultModel;
+  else if (list[0]) modelSelect.value = list[0];
+}
+
+function collectModelAllowModelIds() {
+  const out = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(MODEL_ALLOW_PREFIX)) {
+        const pid = k.slice(MODEL_ALLOW_PREFIX.length);
+        const raw = localStorage.getItem(k);
+        if (!raw) continue;
+        try {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.length) out[pid] = arr.filter(x => typeof x === 'string');
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+  return out;
+}
+
+function getAskAllProviderIdsOverride() {
+  try {
+    const raw = localStorage.getItem(ASK_ALL_IDS_KEY);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) && arr.length ? arr.filter(x => typeof x === 'string') : null;
+  } catch {
+    return null;
+  }
+}
+
+function setAskAllProviderIdsOverride(idsOrNull) {
+  try {
+    if (!idsOrNull || !idsOrNull.length) localStorage.removeItem(ASK_ALL_IDS_KEY);
+    else localStorage.setItem(ASK_ALL_IDS_KEY, JSON.stringify(idsOrNull));
+  } catch { /* ignore */ }
+  renderAskAllProviderList();
+  updateStatus();
+}
+
+function getProvidersEligibleForAskAll() {
+  return getAvailableProviders();
+}
+
+function getAskAllTargets() {
+  const elig = getProvidersEligibleForAskAll();
+  const sub = getAskAllProviderIdsOverride();
+  if (!sub) return elig;
+  const set = new Set(sub);
+  const filtered = elig.filter(x => set.has(x.id));
+  return filtered.length ? filtered : elig;
+}
+
+function renderAskAllProviderList() {
+  if (!askAllProviderList) return;
+  const elig = getProvidersEligibleForAskAll();
+  const sub = getAskAllProviderIdsOverride();
+  if (elig.length === 0) {
+    askAllProviderList.innerHTML = '<li class="empty">No providers available</li>';
+    return;
+  }
+  const activeSet = sub ? new Set(sub) : null;
+  askAllProviderList.innerHTML = elig.map(({ id }) => {
+    const p = providers[id];
+    const on = !activeSet || activeSet.has(id);
+    return `<li class="ask-all-item${on ? '' : ' is-off'}"><label class="ask-all-label">
+      <input type="checkbox" class="ask-all-cb" data-provider-id="${escapeAttr(id)}" ${on ? 'checked' : ''} />
+      <span>${escapeHtml(p?.name || id)}</span>
+    </label></li>`;
+  }).join('');
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -205,6 +359,7 @@ function buildProviderUI() {
   }
   syncHeaderProviderSelect();
   renderProviderSkipList();
+  renderAskAllProviderList();
 }
 
 function restoreProvider() {
@@ -227,14 +382,8 @@ providerSelect.addEventListener('change', () => {
 
   if (headerProviderSelect && headerProviderSelect.value !== id) headerProviderSelect.value = id;
 
-  modelSelect.innerHTML = '';
-  for (const m of p.models) {
-    const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = m;
-    if (m === p.defaultModel) opt.selected = true;
-    modelSelect.appendChild(opt);
-  }
+  refreshModelSelectOptions();
+  renderModelAllowList();
 
   if (p.keyless) {
     keySection.style.display = 'none';
@@ -249,6 +398,35 @@ providerSelect.addEventListener('change', () => {
 
   updateStatus();
   localStorage.setItem('cc_provider', id);
+  renderAskAllProviderList();
+});
+
+modelAllowWrap?.addEventListener('change', e => {
+  const cb = e.target.closest('.model-allow-cb');
+  if (!cb) return;
+  const id = providerSelect.value;
+  const p = providers[id];
+  if (!p?.models?.length) return;
+  const boxes = [...modelAllowWrap.querySelectorAll('.model-allow-cb')];
+  const checked = boxes.filter(b => b.checked).map(b => b.dataset.model);
+  if (checked.length === 0) {
+    cb.checked = true;
+    return;
+  }
+  persistModelsAllowed(id, checked.length >= p.models.length ? null : new Set(checked));
+  refreshModelSelectOptions();
+  renderModelAllowList();
+});
+
+askAllProviderList?.addEventListener('change', () => {
+  const elig = getProvidersEligibleForAskAll();
+  const ids = [...askAllProviderList.querySelectorAll('.ask-all-cb:checked')].map(b => b.dataset.providerId).filter(Boolean);
+  if (ids.length === 0) {
+    renderAskAllProviderList();
+    return;
+  }
+  if (ids.length === elig.length) setAskAllProviderIdsOverride(null);
+  else setAskAllProviderIdsOverride(ids);
 });
 
 headerProviderSelect?.addEventListener('change', () => {
@@ -267,6 +445,7 @@ providerSkipList?.addEventListener('change', e => {
   toggleProviderSkipped(id, !cb.checked);
   cb.closest('.provider-skip-item')?.classList.toggle('is-off', !cb.checked);
   updateStatus();
+  renderAskAllProviderList();
   if (isProviderSkipped(providerSelect.value)) {
     restoreProvider();
   }
@@ -275,6 +454,7 @@ providerSkipList?.addEventListener('change', e => {
 resetProviderSkips?.addEventListener('click', () => {
   setSkippedProviderIds(new Set());
   renderProviderSkipList();
+  renderAskAllProviderList();
   updateStatus();
 });
 
@@ -320,7 +500,7 @@ apiKeyInput.addEventListener('input', () => {
 const MODE_HINTS = {
   'auto':    'Chat mode — streams, tries providers in order, auto-fallback',
   'agent':   'Agent mode — AI uses tools: web, files, images, email, math',
-  'ask-all': 'Sends to all configured providers simultaneously',
+  'ask-all': 'Queries the providers you pick under “Ask All — compare only” (or all if none unchecked)',
 };
 modeToggle.addEventListener('click', e => {
   const btn = e.target.closest('.mode-btn');
@@ -370,8 +550,9 @@ function updateStatus() {
     return;
   }
   if (chatMode === 'ask-all') {
-    setStatus('online', `${available.length} provider${available.length > 1 ? 's' : ''} ready`);
-    activePill.textContent = `Ask All (${available.length})`;
+    const targets = getAskAllTargets();
+    setStatus('online', `${targets.length} in Ask All${available.length !== targets.length ? ` · ${available.length} available` : ''}`);
+    activePill.textContent = `Ask All (${targets.length})`;
     activePill.className = 'provider-pill online';
     activePill.removeAttribute('data-skip-provider-id');
     activePill.removeAttribute('title');
@@ -455,7 +636,7 @@ async function streamChat(id, key, msgs, name) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         provider: id,
-        model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
+        model: getEffectiveModelForProvider(id),
         apiKey: key || undefined,
         messages: [
           { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
@@ -578,7 +759,7 @@ async function sendAgent(msgs) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: id,
-          model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
+          model: getEffectiveModelForProvider(id),
           apiKey: key || undefined,
           messages: [
             { role: 'system', content: systemPrompt.value || 'You are a helpful assistant with tools.' },
@@ -636,17 +817,23 @@ async function sendAskAll(msgs) {
     return;
   }
 
-  const slots = available.map(({ id }) => ({ id, typingId: appendTyping(providers[id].name) }));
+  const targets = getAskAllTargets();
+  if (targets.length === 0) {
+    appendMessage('assistant', 'Ask All has no providers selected. Open ☰ and check at least one backend under “Ask All — compare only”.', true);
+    return;
+  }
+
+  const slots = targets.map(({ id }) => ({ id, typingId: appendTyping(providers[id].name) }));
   setLoading(true);
 
-  await Promise.allSettled(available.map(async ({ id, key }, i) => {
+  await Promise.allSettled(targets.map(async ({ id, key }, i) => {
     try {
       const res = await fetch(`${API}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: id,
-          model: providers[id].defaultModel,
+          model: getEffectiveModelForProvider(id),
           apiKey: key || undefined,
           messages: [
             { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
@@ -668,7 +855,7 @@ async function sendAskAll(msgs) {
   }));
 
   setLoading(false);
-  setStatus('online', `${available.length} providers answered`);
+  setStatus('online', `${targets.length} providers answered`);
 }
 
 // ── Submit handler ─────────────────────────────────────────────────────────
@@ -904,12 +1091,15 @@ async function ghCall(path, opts = {}) {
 function snapshot() {
   let mem = [];
   try { mem = JSON.parse(localStorage.getItem('cc_memory') || '[]'); } catch {}
+  const askAll = getAskAllProviderIdsOverride();
   return {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     sessions,
     memory: mem,
     providerSkipIds: [...getSkippedProviderIds()],
+    askAllProviderIds: askAll ? [...askAll] : null,
+    modelsAllowedByProvider: collectModelAllowModelIds(),
     settings: {
       provider: localStorage.getItem('cc_provider') || '',
       mode: localStorage.getItem('cc_mode') || 'auto',
@@ -967,6 +1157,18 @@ async function pullSnapshot() {
       setSkippedProviderIds(new Set(snap.providerSkipIds.filter(x => typeof x === 'string')));
       renderProviderSkipList();
       if (isProviderSkipped(providerSelect.value)) restoreProvider();
+    }
+    if (snap.askAllProviderIds === null || (Array.isArray(snap.askAllProviderIds) && snap.askAllProviderIds.length === 0)) {
+      setAskAllProviderIdsOverride(null);
+    } else if (Array.isArray(snap.askAllProviderIds)) {
+      setAskAllProviderIdsOverride(snap.askAllProviderIds.filter(x => typeof x === 'string'));
+    }
+    if (snap.modelsAllowedByProvider && typeof snap.modelsAllowedByProvider === 'object') {
+      for (const [pid, arr] of Object.entries(snap.modelsAllowedByProvider)) {
+        if (Array.isArray(arr) && arr.length) try { localStorage.setItem(MODEL_ALLOW_PREFIX + pid, JSON.stringify(arr)); } catch {}
+      }
+      renderModelAllowList();
+      refreshModelSelectOptions();
     }
     setSyncStatus('pulled', 'on');
   } catch (e) {

@@ -52,7 +52,15 @@
 
     <div class="sidebar-section">
       <label>Model</label>
+      <p class="model-allow-help">Check which models this host may use (great for trimming a long list). At least one must stay on.</p>
+      <div id="modelAllowWrap" class="model-allow-wrap"></div>
       <select id="modelSelect"></select>
+    </div>
+
+    <div class="sidebar-section" id="askAllSection">
+      <label>Ask All — compare only</label>
+      <p class="ask-all-help">Pick 3–4 backends to query together. Leave all checked to use every available provider.</p>
+      <ul id="askAllProviderList" class="ask-all-provider-list"></ul>
     </div>
 
     <div class="sidebar-section" id="keySection">

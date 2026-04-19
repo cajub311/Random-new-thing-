@@ -326,6 +326,58 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   padding-left: 24px;
 }
 
+.model-allow-help,
+.ask-all-help {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 0 0 8px;
+}
+.model-allow-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.model-allow-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.model-allow-item input { accent-color: var(--accent); }
+
+.ask-all-provider-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.78rem;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.ask-all-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+}
+.ask-all-item.is-off { opacity: 0.45; border-style: dashed; }
+.ask-all-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.ask-all-cb { accent-color: var(--accent); }
+
 /* ── Provider badge on Ask All messages ──────────────────────────────── */
 .provider-badge {
   display: inline-flex; align-items: center; gap: 4px;
