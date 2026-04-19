@@ -644,6 +644,149 @@ document.getElementById('sidebarClose')?.addEventListener('click', () => {
   });
 })();
 
+// ── GitHub Gist sync (optional cross-device persistence) ──────────────────
+// All requests are made directly from the browser to api.github.com, so the
+// user's token never touches our server. We use a single "openclaw.json"
+// file inside one Gist as the durable store.
+const GH = {
+  get token() { return localStorage.getItem('cc_gh_token') || ''; },
+  set token(v) { v ? localStorage.setItem('cc_gh_token', v) : localStorage.removeItem('cc_gh_token'); },
+  get gistId() { return localStorage.getItem('cc_gh_gist') || ''; },
+  set gistId(v) { v ? localStorage.setItem('cc_gh_gist', v) : localStorage.removeItem('cc_gh_gist'); },
+  get auto() { return localStorage.getItem('cc_gh_auto') === '1'; },
+  set auto(v) { localStorage.setItem('cc_gh_auto', v ? '1' : '0'); },
+};
+
+const ghTokenInput = document.getElementById('ghTokenInput');
+const ghGistInput  = document.getElementById('ghGistInput');
+const syncStatus   = document.getElementById('syncStatus');
+const syncPushBtn  = document.getElementById('syncPushBtn');
+const syncPullBtn  = document.getElementById('syncPullBtn');
+const syncAutoBtn  = document.getElementById('syncAutoBtn');
+
+function setSyncStatus(text, cls = '') {
+  if (!syncStatus) return;
+  syncStatus.textContent = text;
+  syncStatus.className = 'sync-status ' + cls;
+}
+
+function refreshSyncStatus() {
+  if (!GH.token) return setSyncStatus('off');
+  if (!GH.gistId) return setSyncStatus(GH.auto ? 'auto · no gist' : 'token only', 'warn');
+  setSyncStatus(GH.auto ? 'auto-sync on' : 'manual', 'on');
+}
+
+if (ghTokenInput) {
+  ghTokenInput.value = GH.token;
+  ghTokenInput.addEventListener('input', () => { GH.token = ghTokenInput.value.trim(); refreshSyncStatus(); });
+}
+if (ghGistInput) {
+  ghGistInput.value = GH.gistId;
+  ghGistInput.addEventListener('input', () => { GH.gistId = ghGistInput.value.trim(); refreshSyncStatus(); });
+}
+
+async function ghCall(path, opts = {}) {
+  if (!GH.token) throw new Error('No GitHub token configured');
+  const res = await fetch(`https://api.github.com${path}`, {
+    ...opts,
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'Authorization': `Bearer ${GH.token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) throw new Error(`GitHub ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+function snapshot() {
+  let mem = [];
+  try { mem = JSON.parse(localStorage.getItem('cc_memory') || '[]'); } catch {}
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    sessions,
+    memory: mem,
+    settings: {
+      provider: localStorage.getItem('cc_provider') || '',
+      mode: localStorage.getItem('cc_mode') || 'auto',
+    },
+  };
+}
+
+async function pushSnapshot({ silent } = {}) {
+  if (!GH.token) { if (!silent) alert('Add a GitHub token first.'); return; }
+  setSyncStatus('pushing…', 'busy');
+  try {
+    const payload = { description: 'OpenClaw backup', public: false, files: { 'openclaw.json': { content: JSON.stringify(snapshot(), null, 2) } } };
+    let result;
+    if (GH.gistId) {
+      result = await ghCall(`/gists/${GH.gistId}`, { method: 'PATCH', body: JSON.stringify({ files: payload.files }) });
+    } else {
+      result = await ghCall('/gists', { method: 'POST', body: JSON.stringify(payload) });
+      GH.gistId = result.id;
+      if (ghGistInput) ghGistInput.value = result.id;
+    }
+    setSyncStatus('synced ' + new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), 'on');
+  } catch (e) {
+    setSyncStatus('push failed', 'warn');
+    if (!silent) alert('Push failed: ' + e.message);
+  }
+}
+
+async function pullSnapshot() {
+  if (!GH.token || !GH.gistId) { alert('Need both a token and a Gist ID to pull.'); return; }
+  setSyncStatus('pulling…', 'busy');
+  try {
+    const data = await ghCall(`/gists/${GH.gistId}`);
+    const file = data.files?.['openclaw.json'];
+    if (!file) throw new Error('Gist missing openclaw.json');
+    const snap = JSON.parse(file.truncated && file.raw_url
+      ? await (await fetch(file.raw_url)).text()
+      : file.content);
+    if (Array.isArray(snap.sessions)) {
+      sessions = snap.sessions;
+      try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
+      renderSessions();
+    }
+    if (Array.isArray(snap.memory)) {
+      try { localStorage.setItem('cc_memory', JSON.stringify(snap.memory)); } catch {}
+      // Re-upload to server so the agent can recall.
+      for (const m of snap.memory) {
+        await fetch(`${API}/api/memory`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: m.text, tags: m.tags, importance: m.importance }),
+        }).catch(() => {});
+      }
+      loadMemory();
+    }
+    setSyncStatus('pulled', 'on');
+  } catch (e) {
+    setSyncStatus('pull failed', 'warn');
+    alert('Pull failed: ' + e.message);
+  }
+}
+
+syncPushBtn?.addEventListener('click', () => pushSnapshot());
+syncPullBtn?.addEventListener('click', pullSnapshot);
+syncAutoBtn?.addEventListener('click', () => {
+  GH.auto = !GH.auto;
+  refreshSyncStatus();
+  if (GH.auto) pushSnapshot({ silent: true });
+});
+
+// Debounced auto-push when sessions change.
+let autoPushTimer = null;
+window.addEventListener('cc:session-saved', () => {
+  if (!GH.auto || !GH.token) return;
+  clearTimeout(autoPushTimer);
+  autoPushTimer = setTimeout(() => pushSnapshot({ silent: true }), 4000);
+});
+
+refreshSyncStatus();
+
 // ── PWA: register service worker ──────────────────────────────────────────
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => {
@@ -897,27 +1040,61 @@ async function loadFiles() {
 if (refreshFilesBtn) refreshFilesBtn.addEventListener('click', loadFiles);
 
 // ── Memory panel ──────────────────────────────────────────────────────────
+function renderMemoryList(entries) {
+  if (!memoryList) return;
+  if (!entries || entries.length === 0) {
+    memoryList.innerHTML = '<li class="empty">No memories yet</li>';
+    return;
+  }
+  memoryList.innerHTML = entries.slice(0, 40).map(e => `
+    <li data-id="${escapeAttr(e.id)}">
+      <span class="mem-text">${escapeHtml(e.text)}</span>
+      <div class="mem-meta">
+        ${(e.tags || []).map(t => `<span class="mem-tag">${escapeHtml(t)}</span>`).join('')}
+        ${e.importance >= 3 ? '<span class="mem-imp">★</span>' : ''}
+        <button class="icon-btn mini mem-del" data-del="${escapeAttr(e.id)}" title="Forget">×</button>
+      </div>
+    </li>`).join('');
+}
+
+// Memory survives Vercel cold starts (which wipe /tmp) by mirroring every
+// fetched entry into localStorage and re-uploading any that the server is
+// missing on subsequent loads.
 async function loadMemory() {
   if (!memoryList) return;
+  let serverEntries = [];
   try {
     const res = await fetch(`${API}/api/memory`);
     const data = await res.json();
-    if (!data.entries || data.entries.length === 0) {
-      memoryList.innerHTML = '<li class="empty">No memories yet</li>';
-      return;
-    }
-    memoryList.innerHTML = data.entries.slice(0, 40).map(e => `
-      <li data-id="${escapeAttr(e.id)}">
-        <span class="mem-text">${escapeHtml(e.text)}</span>
-        <div class="mem-meta">
-          ${(e.tags || []).map(t => `<span class="mem-tag">${escapeHtml(t)}</span>`).join('')}
-          ${e.importance >= 3 ? '<span class="mem-imp">★</span>' : ''}
-          <button class="icon-btn mini mem-del" data-del="${escapeAttr(e.id)}" title="Forget">×</button>
-        </div>
-      </li>`).join('');
+    serverEntries = Array.isArray(data.entries) ? data.entries : [];
   } catch {
-    memoryList.innerHTML = '<li class="empty">Could not load</li>';
+    memoryList.innerHTML = '<li class="empty">Could not reach server</li>';
   }
+
+  let localEntries = [];
+  try { localEntries = JSON.parse(localStorage.getItem('cc_memory') || '[]'); } catch {}
+
+  // Re-upload local entries the server lost (cold start, redeploy, etc.).
+  const serverIds = new Set(serverEntries.map(e => e.id));
+  const missing = localEntries.filter(e => !serverIds.has(e.id));
+  if (missing.length) {
+    await Promise.all(missing.map(e =>
+      fetch(`${API}/api/memory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: e.text, tags: e.tags, importance: e.importance }),
+      }).catch(() => {})
+    ));
+    try {
+      const r2 = await fetch(`${API}/api/memory`);
+      const d2 = await r2.json();
+      serverEntries = Array.isArray(d2.entries) ? d2.entries : serverEntries;
+    } catch {}
+  }
+
+  // Mirror the truth to localStorage as the durable store.
+  try { localStorage.setItem('cc_memory', JSON.stringify(serverEntries)); } catch {}
+  renderMemoryList(serverEntries);
 }
 
 memoryList?.addEventListener('click', async e => {
@@ -983,12 +1160,23 @@ function timestamp() {
 function loadSessions() {
   try { sessions = JSON.parse(localStorage.getItem('cc_sessions') || '[]'); } catch { sessions = []; }
   currentSessionId = localStorage.getItem('cc_current_session') || null;
+
+  // If we don't have a current session pointer but there ARE saved chats,
+  // auto-resume the most recent one. This is what users expect — opening
+  // the tab should restore their last conversation, not greet them with a
+  // blank welcome screen every time.
+  if (!currentSessionId && sessions.length) {
+    const mostRecent = [...sessions].sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
+    if (mostRecent) currentSessionId = mostRecent.id;
+  }
+
   if (currentSessionId) {
     const s = sessions.find(s => s.id === currentSessionId);
     if (s) {
       messages = s.messages || [];
       chatMode = s.mode || 'auto';
       if (messages.length) replayMessages();
+      localStorage.setItem('cc_current_session', currentSessionId);
     }
   }
 }
@@ -1030,6 +1218,7 @@ function saveCurrentSession() {
   sessions = sessions.slice(0, 30);
   try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
   renderSessions();
+  window.dispatchEvent(new CustomEvent('cc:session-saved'));
 }
 
 function sessionTitle(msgs) {

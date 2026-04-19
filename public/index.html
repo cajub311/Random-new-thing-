@@ -82,6 +82,24 @@
       <input type="range" id="tempRange" min="0" max="2" step="0.1" value="0.7" />
     </div>
 
+    <div class="sidebar-section" id="syncSection">
+      <label>
+        Cloud Backup
+        <span id="syncStatus" class="sync-status">off</span>
+      </label>
+      <details>
+        <summary>GitHub Gist sync</summary>
+        <p class="sync-help">Back up chats &amp; memory to a private Gist so they survive across devices and redeploys. Token needs the <code>gist</code> scope only.</p>
+        <input type="password" id="ghTokenInput" placeholder="GitHub token (ghp_…)" autocomplete="off" />
+        <input type="text" id="ghGistInput" placeholder="Gist ID (leave blank to create)" autocomplete="off" />
+        <div class="sync-row">
+          <button class="icon-btn mini" id="syncPushBtn" title="Push local data to Gist">↑ Push</button>
+          <button class="icon-btn mini" id="syncPullBtn" title="Pull data from Gist">↓ Pull</button>
+          <button class="icon-btn mini" id="syncAutoBtn" title="Toggle auto-sync after every change">⟲ Auto</button>
+        </div>
+      </details>
+    </div>
+
     <div class="sidebar-footer">
       <div id="statusDot" class="status-dot offline"></div>
       <span id="statusText">Loading providers…</span>

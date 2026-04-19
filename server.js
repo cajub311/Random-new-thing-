@@ -188,26 +188,47 @@ app.post('/api/chat/stream', async (req, res) => {
   }
 
   const { buildUrl } = await import('./lib/providers.js');
-  const url = buildUrl(provider, model || provider.defaultModel);
-  const upstream = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(key ? { Authorization: `Bearer ${key}` } : {}),
-    },
-    body: JSON.stringify({
-      model: model || provider.defaultModel,
-      messages,
-      stream: true,
-      max_tokens: 4096,
-    }),
-  }).catch(e => ({ ok: false, error: e }));
+
+  // For keyless providers (notably Pollinations) we rotate through their
+  // model list on transient upstream failures before giving up, which hides
+  // a lot of intermittent 5xx/429 flakiness from the user.
+  const candidateModels = provider.keyless
+    ? Array.from(new Set([model || provider.defaultModel, ...(provider.models || [])])).slice(0, 4)
+    : [model || provider.defaultModel];
+
+  let upstream = null;
+  let lastErr = null;
+  let usedModel = candidateModels[0];
+  for (const m of candidateModels) {
+    const url = buildUrl(provider, m);
+    let attempt = 0;
+    while (attempt < (provider.keyless ? 2 : 1)) {
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(key ? { Authorization: `Bearer ${key}` } : {}),
+          },
+          body: JSON.stringify({ model: m, messages, stream: true, max_tokens: 4096 }),
+        });
+        if (r.ok && r.body) { upstream = r; usedModel = m; break; }
+        lastErr = new Error(`upstream status ${r.status}`);
+        // Only retry same model on 5xx/429.
+        if (r.status < 500 && ![408, 425, 429].includes(r.status)) break;
+      } catch (e) { lastErr = e; }
+      attempt++;
+      await new Promise(res => setTimeout(res, 300 * attempt));
+    }
+    if (upstream) break;
+  }
 
   if (!upstream || !upstream.ok || !upstream.body) {
-    const msg = upstream?.error?.message || `upstream status ${upstream?.status}`;
+    const msg = lastErr?.message || 'upstream unreachable';
     send('error', { message: msg });
     return res.end();
   }
+  model = usedModel;
 
   const decoder = new TextDecoder();
   let buf = '';

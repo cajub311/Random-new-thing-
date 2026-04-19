@@ -105,6 +105,20 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 }
 .icon-btn:hover { background: var(--surface2); border-color: var(--accent); }
 
+#syncSection input { width: 100%; box-sizing: border-box; padding: 6px 8px; margin: 4px 0;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; }
+#syncSection details { margin-top: 4px; }
+#syncSection summary { cursor: pointer; font-size: 12px; color: var(--text-muted); padding: 4px 0; }
+.sync-help { font-size: 11px; color: var(--text-muted); margin: 6px 0; line-height: 1.4; }
+.sync-help code { background: var(--surface2); padding: 0 4px; border-radius: 3px; }
+.sync-row { display: flex; gap: 4px; margin-top: 6px; }
+.sync-row .icon-btn { flex: 1; font-size: 11px; padding: 4px 6px; }
+.sync-status { float: right; font-size: 10px; padding: 1px 6px; border-radius: 8px;
+  background: var(--surface2); color: var(--text-muted); text-transform: lowercase; letter-spacing: 0.5px; }
+.sync-status.on   { background: #1e5e3e; color: #d6f5e3; }
+.sync-status.warn { background: #5e4a1e; color: #f5ead6; }
+.sync-status.busy { background: #1e3e5e; color: #d6e3f5; }
+
 .mic-btn.recording {
   background: #c0392b; border-color: #c0392b; color: #fff;
   animation: pulse 1.2s ease-in-out infinite;
