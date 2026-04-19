@@ -16,7 +16,21 @@
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/common.min.js"></script>
 </head>
 <body>
-  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <!-- ── Conversation history (collapsible left rail) ─────────── -->
+  <nav class="history-rail" id="historyRail" aria-label="Conversation history">
+    <button type="button" class="history-rail-toggle" id="historyRailToggle" title="Collapse history" aria-expanded="true" aria-controls="historyRailInner">
+      <span class="history-rail-toggle-icon" aria-hidden="true">◀</span>
+    </button>
+    <div class="history-rail-inner" id="historyRailInner">
+      <div class="history-rail-head">
+        <span class="history-rail-title">History</span>
+      </div>
+      <input type="search" id="historySearchInput" class="history-search" placeholder="Search conversations…" autocomplete="off" aria-label="Search conversations" />
+      <ul id="historyList" class="history-list"></ul>
+    </div>
+  </nav>
+
+  <!-- ── Sidebar (settings) ─────────────────────────────────────── -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <button class="icon-btn sidebar-close" id="sidebarClose" title="Back to chat" aria-label="Back to chat">←</button>
@@ -25,8 +39,15 @@
     </div>
 
     <div class="sidebar-section" id="sessionsSection">
-      <label>Conversations <button class="icon-btn mini" id="exportChatBtn" title="Export current chat as markdown">↓</button></label>
-      <ul id="sessionsList" class="sessions-list"></ul>
+      <label>Conversations</label>
+      <p class="sidebar-hint">Chats are listed in the <strong>left history</strong> panel. Rename a thread by double-clicking its title.</p>
+      <div class="settings-export-row">
+        <button type="button" class="btn-secondary btn-block" id="exportChatBtn">Export current (Markdown)</button>
+      </div>
+      <div class="settings-export-row">
+        <button type="button" class="btn-secondary btn-block" id="exportAllJsonBtn">Export all chats (JSON)</button>
+        <button type="button" class="btn-secondary btn-block" id="exportAllMdBtn">Export all chats (Markdown)</button>
+      </div>
     </div>
 
     <div class="sidebar-section">
@@ -94,6 +115,7 @@
       <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
       <span class="topbar-title">OpenClaw</span>
       <span class="provider-pill" id="activePill"></span>
+      <button class="icon-btn" id="headerNewChatBtn" title="New chat">＋</button>
       <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
     </header>
 
