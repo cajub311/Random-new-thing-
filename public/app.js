@@ -78,6 +78,19 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+/** Static welcome trust highlights (mirrors index.html welcome block). */
+function trustBarHtml() {
+  return `<section class="trust-bar" aria-label="Trust and privacy highlights">
+  <div class="trust-bar-inner">
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">🔓</span><span class="trust-label">100% Open Source</span></div>
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">🏠</span><span class="trust-label">Private by default (local-first)</span></div>
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">☁️</span><span class="trust-label">Free cloud fallback</span></div>
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">🤖</span><span class="trust-label">Agent mode + tools + memory</span></div>
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">🛡️</span><span class="trust-label">No data stored</span></div>
+  </div>
+</section>`;
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
@@ -686,6 +699,7 @@ function showWelcome() {
       <div class="welcome-icon">🐾</div>
       <h1>OpenClaw</h1>
       <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
+      ${trustBarHtml()}
       <div class="provider-cards" id="providerCardsWelcome"></div>
       <div class="quick-prompts">
         <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
