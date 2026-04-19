@@ -6,6 +6,7 @@
   <title>OpenClaw — Free, Local-First AI Assistant</title>
   <meta name="description" content="Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers." />
   <meta name="theme-color" content="#0b1020" />
+  <meta name="openclaw-readme" content="https://github.com/cajub311/Random-new-thing-/blob/main/README.md" />
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>" />
@@ -60,7 +61,7 @@
 
     <div class="sidebar-section">
       <label>System Prompt</label>
-      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time) to complete tasks.</textarea>
+      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are OpenClaw, a powerful, friendly open-source AI assistant. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time) to complete tasks.</textarea>
     </div>
 
     <div class="sidebar-section" id="filesSection">
@@ -111,47 +112,108 @@
     <header class="topbar">
       <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
       <span class="topbar-title">OpenClaw</span>
+      <nav class="main-tabs" id="mainTabs" role="tablist" aria-label="Main view">
+        <button type="button" class="main-tab active" id="mainTabChat" data-main-tab="chat" role="tab" aria-selected="true" aria-controls="chatPanel">Chat</button>
+        <button type="button" class="main-tab" id="mainTabExplore" data-main-tab="explore" role="tab" aria-selected="false" aria-controls="explorePanel">What's next</button>
+      </nav>
       <span class="provider-pill" id="activePill"></span>
       <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
     </header>
 
-    <div class="messages" id="messages">
-      <div class="welcome">
-        <div class="welcome-icon">🐾</div>
-        <h1>OpenClaw</h1>
-        <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
-        <div class="provider-cards" id="providerCards"></div>
-        <div class="quick-prompts">
-          <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
-          <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+    <div class="main-stack">
+      <section id="chatPanel" class="main-panel main-panel-chat" role="tabpanel" aria-labelledby="mainTabChat">
+        <div class="messages" id="messages">
+          <div class="welcome">
+            <div class="welcome-icon">🐾</div>
+            <h1>OpenClaw</h1>
+            <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
+            <div class="provider-cards" id="providerCards"></div>
+            <div class="quick-prompts">
+              <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
+              <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
+              <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
+              <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
+              <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
+              <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+            </div>
+            <p class="tip" id="welcomeTip"><strong>🎉 No API key required.</strong> If you have <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> running locally, OpenClaw will auto-connect and keep everything private on your machine. Otherwise the free keyless Pollinations provider kicks in. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
+            <div class="welcome-next-teaser">
+              <p class="welcome-next-label">Looking for more?</p>
+              <button type="button" class="welcome-next-btn js-open-explore" title="Open the What's next tab">Full OpenClaw &amp; roadmap →</button>
+            </div>
+          </div>
         </div>
-        <p class="tip" id="welcomeTip"><strong>🎉 No API key required.</strong> If you have <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> running locally, OpenClaw will auto-connect and keep everything private on your machine. Otherwise the free keyless Pollinations provider kicks in. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
-      </div>
+
+        <form class="input-area" id="chatForm">
+          <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach file">📎</button>
+          <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.js,.py,.html,.css,.json,.csv,image/*" />
+          <button type="button" class="icon-btn mic-btn" id="micBtn" title="Voice input (hold or click)" hidden>🎙</button>
+          <textarea
+            id="userInput"
+            placeholder="Ask anything… (Shift+Enter for new line, type / for commands)"
+            rows="1"
+            autocomplete="off"
+          ></textarea>
+          <div class="slash-menu" id="slashMenu" hidden></div>
+          <button type="button" class="send-btn stop-btn" id="stopBtn" title="Stop" style="display:none">■</button>
+          <button type="submit" class="send-btn" id="sendBtn" title="Send">
+            <span id="sendIcon">➤</span>
+            <span id="loadingIcon" style="display:none">⏳</span>
+          </button>
+        </form>
+
+        <p class="disclaimer">Free AI APIs may have rate limits. OpenClaw never stores your messages or API keys.</p>
+      </section>
+
+      <section id="explorePanel" class="main-panel main-panel-explore" role="tabpanel" aria-labelledby="mainTabExplore" hidden>
+        <div class="explore-scroll">
+          <h2 class="explore-title">What's next</h2>
+          <p class="explore-lead">This is the <strong>web chat demo</strong>. Full OpenClaw also runs on: <strong>Discord</strong>, <strong>Slack</strong>, <strong>WhatsApp</strong>, <strong>Voice</strong>, <strong>Desktop apps</strong> + <strong>Live Canvas</strong> workspace.</p>
+          <div class="explore-cards">
+            <a class="explore-card" href="https://openclaw.vercel.app/" target="_blank" rel="noopener noreferrer">
+              <span class="explore-card-icon" aria-hidden="true">🌐</span>
+              <span class="explore-card-title">Official demo</span>
+              <span class="explore-card-desc">Try OpenClaw on the hosted demo at openclaw.vercel.app.</span>
+            </a>
+            <a class="explore-card" id="readmeFullOpenClaw" href="https://github.com/cajub311/Random-new-thing-/blob/main/README.md#full-openclaw" target="_blank" rel="noopener noreferrer">
+              <span class="explore-card-icon" aria-hidden="true">🐾</span>
+              <span class="explore-card-title">Full OpenClaw</span>
+              <span class="explore-card-desc">How this demo fits the broader product — README section.</span>
+            </a>
+            <a class="explore-card" id="readmeRoadmap" href="https://github.com/cajub311/Random-new-thing-/blob/main/README.md#roadmap-ideas" target="_blank" rel="noopener noreferrer">
+              <span class="explore-card-icon" aria-hidden="true">🗺</span>
+              <span class="explore-card-title">Channels &amp; canvas</span>
+              <span class="explore-card-desc">Discord, Slack, WhatsApp, voice, desktop — roadmap ideas.</span>
+            </a>
+            <a class="explore-card" id="readmeTelegram" href="https://github.com/cajub311/Random-new-thing-/blob/main/README.md#telegram-bot" target="_blank" rel="noopener noreferrer">
+              <span class="explore-card-icon" aria-hidden="true">✈️</span>
+              <span class="explore-card-title">Telegram bot</span>
+              <span class="explore-card-desc">Shipped adapter: same agent over Telegram.</span>
+            </a>
+            <a class="explore-card" id="readmeArchitecture" href="https://github.com/cajub311/Random-new-thing-/blob/main/README.md#architecture" target="_blank" rel="noopener noreferrer">
+              <span class="explore-card-icon" aria-hidden="true">🧠</span>
+              <span class="explore-card-title">Architecture</span>
+              <span class="explore-card-desc">Web UI, adapters, and the agent brain in one diagram.</span>
+            </a>
+            <a class="explore-card" id="readmeDeploy" href="https://github.com/cajub311/Random-new-thing-/blob/main/README.md#deploy-for-free" target="_blank" rel="noopener noreferrer">
+              <span class="explore-card-icon" aria-hidden="true">☁️</span>
+              <span class="explore-card-title">Deploy</span>
+              <span class="explore-card-desc">Vercel, Render, Docker, and self-host notes.</span>
+            </a>
+          </div>
+          <div class="explore-voice-teaser">
+            <button type="button" class="voice-mode-btn" disabled title="Coming soon">
+              <span class="voice-mode-row">
+                <span class="voice-mode-icon" aria-hidden="true">🎙</span>
+                <span class="voice-mode-label">Voice mode</span>
+              </span>
+              <span class="voice-mode-hint">Coming soon — speak to your agent</span>
+            </button>
+          </div>
+          <p class="explore-foot"><button type="button" class="explore-back-link" id="exploreBackToChat">← Back to chat</button></p>
+        </div>
+      </section>
     </div>
-
-    <form class="input-area" id="chatForm">
-      <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach file">📎</button>
-      <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.js,.py,.html,.css,.json,.csv,image/*" />
-      <button type="button" class="icon-btn mic-btn" id="micBtn" title="Voice input (hold or click)" hidden>🎙</button>
-      <textarea
-        id="userInput"
-        placeholder="Ask anything… (Shift+Enter for new line, type / for commands)"
-        rows="1"
-        autocomplete="off"
-      ></textarea>
-      <div class="slash-menu" id="slashMenu" hidden></div>
-      <button type="button" class="send-btn stop-btn" id="stopBtn" title="Stop" style="display:none">■</button>
-      <button type="submit" class="send-btn" id="sendBtn" title="Send">
-        <span id="sendIcon">➤</span>
-        <span id="loadingIcon" style="display:none">⏳</span>
-      </button>
-    </form>
-
-    <p class="disclaimer">Free AI APIs may have rate limits. CloudClaw never stores your messages or API keys.</p>
   </main>
 
   <script src="app.js"></script>
