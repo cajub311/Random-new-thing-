@@ -97,20 +97,25 @@
       <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
     </header>
 
+    <div class="example-prompts-bar" id="examplePromptsBar" aria-label="Example prompts">
+      <div class="example-prompts-inner">
+        <span class="example-prompts-label">Try</span>
+        <div class="example-prompt-cards" role="list">
+          <button type="button" class="example-prompt-card" data-mode="agent" data-prompt="Research the latest AI news">Research the latest AI news</button>
+          <button type="button" class="example-prompt-card" data-mode="agent" data-prompt="Generate an image of a futuristic city">Generate an image of a futuristic city</button>
+          <button type="button" class="example-prompt-card" data-mode="agent" data-prompt="Help me draft an email">Help me draft an email</button>
+          <button type="button" class="example-prompt-card" data-mode="agent" data-prompt="Analyze this file (upload)">Analyze this file (upload)</button>
+          <button type="button" class="example-prompt-card" data-mode="agent" data-prompt="Calculate something complex">Calculate something complex</button>
+        </div>
+      </div>
+    </div>
+
     <div class="messages" id="messages">
       <div class="welcome">
         <div class="welcome-icon">🐾</div>
         <h1>OpenClaw</h1>
         <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
         <div class="provider-cards" id="providerCards"></div>
-        <div class="quick-prompts">
-          <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
-          <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
-        </div>
         <p class="tip" id="welcomeTip"><strong>🎉 No API key required.</strong> If you have <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> running locally, OpenClaw will auto-connect and keep everything private on your machine. Otherwise the free keyless Pollinations provider kicks in. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
       </div>
     </div>

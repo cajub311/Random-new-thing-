@@ -27,6 +27,7 @@ const tempVal        = document.getElementById('tempVal');
 const statusDot      = document.getElementById('statusDot');
 const statusText     = document.getElementById('statusText');
 const messagesEl     = document.getElementById('messages');
+const examplePromptsBar = document.getElementById('examplePromptsBar');
 const chatForm       = document.getElementById('chatForm');
 const userInput      = document.getElementById('userInput');
 const sendBtn        = document.getElementById('sendBtn');
@@ -678,7 +679,17 @@ fileInput.addEventListener('change', async () => {
 exportChatBtn.addEventListener('click', exportChat);
 
 // ── Render helpers ─────────────────────────────────────────────────────────
-function removeWelcome() { messagesEl.querySelector('.welcome')?.remove(); }
+function updateExamplePromptsVisibility() {
+  if (!examplePromptsBar) return;
+  const hasWelcome = !!messagesEl.querySelector('.welcome');
+  const hasThread = messages.length > 0;
+  examplePromptsBar.classList.toggle('is-conversation-active', hasThread && !hasWelcome);
+}
+
+function removeWelcome() {
+  messagesEl.querySelector('.welcome')?.remove();
+  updateExamplePromptsVisibility();
+}
 
 function showWelcome() {
   messagesEl.innerHTML = `
@@ -687,14 +698,6 @@ function showWelcome() {
       <h1>OpenClaw</h1>
       <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
       <div class="provider-cards" id="providerCardsWelcome"></div>
-      <div class="quick-prompts">
-        <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
-        <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
-      </div>
       <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
     </div>`;
   const cards = document.getElementById('providerCardsWelcome');
@@ -711,6 +714,7 @@ function showWelcome() {
     });
     cards.appendChild(card);
   }
+  updateExamplePromptsVisibility();
 }
 
 function appendAssistantShell(providerId = null) {
@@ -934,9 +938,9 @@ clearMemoryBtn?.addEventListener('click', async () => {
   loadMemory();
 });
 
-// ── Quick prompts on the welcome screen ────────────────────────────────────
+// ── Example prompt cards (welcome bar + any in-page duplicates) ───────────
 document.addEventListener('click', e => {
-  const qp = e.target.closest('.quick-prompt');
+  const qp = e.target.closest('.example-prompt-card');
   if (!qp) return;
   const mode = qp.dataset.mode;
   const prompt = qp.dataset.prompt;
@@ -1000,6 +1004,7 @@ function replayMessages() {
       appendMessage(m.role, m.content);
     }
   }
+  updateExamplePromptsVisibility();
 }
 
 function newSession() {
@@ -1112,7 +1117,11 @@ systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', s
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-init().then(() => { loadFiles(); loadMemory(); });
+init().then(() => {
+  loadFiles();
+  loadMemory();
+  updateExamplePromptsVisibility();
+});
 // Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
 setInterval(async () => {
   try {

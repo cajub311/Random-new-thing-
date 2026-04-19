@@ -123,6 +123,67 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 .send-btn:hover { background: var(--accent2); transform: scale(1.05); }
 .send-btn:disabled { background: var(--border); cursor: not-allowed; transform: none; }
 
+/* ── Example prompt cards (below topbar, always visible) ─────────────── */
+.example-prompts-bar {
+  flex-shrink: 0;
+  padding: 10px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.example-prompts-inner {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.example-prompts-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.example-prompt-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.example-prompt-card {
+  text-align: left;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), transform var(--transition);
+  max-width: 100%;
+}
+.example-prompt-card:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.example-prompt-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.example-prompts-bar.is-conversation-active {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.example-prompts-bar.is-conversation-active .example-prompts-label {
+  display: none;
+}
+.example-prompts-bar.is-conversation-active .example-prompt-card {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+}
+
 /* ── Messages ────────────────────────────────────────────────────────── */
 .messages {
   flex: 1; overflow-y: auto; padding: 20px;
