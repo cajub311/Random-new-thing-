@@ -147,7 +147,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 .messages::-webkit-scrollbar-track { background: transparent; }
 .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-.welcome { text-align: center; max-width: 600px; margin: auto; }
+.welcome { text-align: center; max-width: 720px; margin: auto; }
 .welcome-icon { font-size: 4rem; margin-bottom: 16px; }
 .welcome h1 { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 .welcome p { color: var(--text-muted); margin: 10px 0; line-height: 1.6; }
@@ -174,6 +174,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 10px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text);
@@ -191,7 +192,11 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   line-height: 1;
   flex-shrink: 0;
 }
-.trust-card-text { color: var(--text-muted); font-weight: 600; }
+.trust-card-text {
+  color: var(--text-muted);
+  font-weight: 600;
+  hyphens: auto;
+}
 
 .sidebar-trust {
   padding-top: 12px;
@@ -212,6 +217,27 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 
 @media (max-width: 640px) {
   .trust-card { max-width: none; flex: 1 1 calc(50% - 4px); }
+}
+
+/* Welcome strip: swipe on very narrow viewports (from trust-bar-bacf) */
+@media (max-width: 520px) {
+  .welcome .trust-strip-inner {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    margin: 0 -4px;
+    padding-left: 4px;
+    padding-right: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .welcome .trust-card {
+    flex: 0 0 auto;
+    min-width: 148px;
+    max-width: none;
+  }
+  .welcome .trust-card-text { font-size: 0.65rem; }
 }
 
 .provider-cards { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 20px 0; }
