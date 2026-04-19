@@ -161,10 +161,11 @@ providerSelect.addEventListener('change', () => {
 });
 
 apiKeyInput.addEventListener('input', () => {
-  const id = providerSelect.value;
-  const trimmed = apiKeyInput.value.trim();
-  if (trimmed) localStorage.setItem(`cc_key_${id}`, trimmed);
-  else         localStorage.removeItem(`cc_key_${id}`);
+  syncApiKeyFromInput();
+  updateStatus();
+});
+apiKeyInput.addEventListener('change', () => {
+  syncApiKeyFromInput();
   updateStatus();
 });
 
@@ -188,8 +189,29 @@ function setChatMode(mode) {
   if (mode === 'agent') loadFiles();
 }
 
+// Sync key from the visible input so requests use what the user typed before
+// blur (localStorage is only updated on `input` events).
+function syncApiKeyFromInput() {
+  if (!keySection || keySection.style.display === 'none') return;
+  const id = providerSelect.value;
+  const p = providers[id];
+  if (!p || p.keyless) return;
+  const trimmed = apiKeyInput.value.trim();
+  if (trimmed) localStorage.setItem(`cc_key_${id}`, trimmed);
+  else localStorage.removeItem(`cc_key_${id}`);
+}
+
+function keyForProvider(id) {
+  if (id === providerSelect.value && keySection?.style.display !== 'none') {
+    const live = apiKeyInput.value.trim();
+    if (live) return live;
+  }
+  return localStorage.getItem(`cc_key_${id}`) || '';
+}
+
 // ── Available providers helper ─────────────────────────────────────────────
 function getAvailableProviders({ toolsOnly = false } = {}) {
+  syncApiKeyFromInput();
   const preferred = providerSelect.value;
   const ordered = [preferred, ...PROVIDER_ORDER.filter(id => id !== preferred)];
   return ordered
@@ -198,7 +220,7 @@ function getAvailableProviders({ toolsOnly = false } = {}) {
     .map(id => {
       const p = providers[id];
       if (p.keyless) return { id, key: '' };
-      const key = localStorage.getItem(`cc_key_${id}`) || '';
+      const key = keyForProvider(id);
       if (key || p.configured) return { id, key };
       return null;
     })
@@ -414,6 +436,7 @@ async function sendAgent(msgs) {
     activePill.className = 'provider-pill online';
     saveCurrentSession();
     loadFiles();
+    if (data.trace?.some(t => t.tool === 'remember' && t.result?.id)) loadMemory();
   } catch (err) {
     removeTyping(typingId);
     if (err.name !== 'AbortError') {
