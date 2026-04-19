@@ -133,11 +133,45 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 .messages::-webkit-scrollbar-track { background: transparent; }
 .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-.welcome { text-align: center; max-width: 600px; margin: auto; }
+.welcome { text-align: center; max-width: 640px; margin: auto; }
 .welcome-icon { font-size: 4rem; margin-bottom: 16px; }
-.welcome h1 { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.welcome-headline {
+  font-size: 1.65rem; font-weight: 700; line-height: 1.25;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  margin: 0 0 12px;
+}
+.welcome-sub { color: var(--text-muted); margin: 0 0 20px; line-height: 1.65; font-size: 0.95rem; }
 .welcome p { color: var(--text-muted); margin: 10px 0; line-height: 1.6; }
 .tip { font-size: 0.85rem; }
+
+.hero-cta {
+  display: flex; flex-direction: column; align-items: stretch; gap: 12px;
+  margin: 0 auto 24px; max-width: 420px;
+}
+.hero-cta-primary {
+  font-family: inherit; font-size: 1.05rem; font-weight: 600;
+  padding: 14px 22px; border: none; border-radius: 12px; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+  transition: transform var(--transition), filter var(--transition), box-shadow var(--transition);
+}
+.hero-cta-primary:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 10px 28px rgba(99, 102, 241, 0.45); }
+.hero-cta-primary:active { transform: translateY(0); }
+.hero-cta-secondary {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  font-family: inherit; font-size: 0.95rem; font-weight: 600; text-decoration: none;
+  padding: 12px 18px; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--border); color: var(--text);
+  background: var(--surface2);
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.hero-cta-secondary:hover { border-color: var(--accent); color: var(--accent2); background: var(--surface); }
+.hero-cta-tertiary {
+  font-size: 0.88rem; color: var(--accent2); text-decoration: none; font-weight: 500;
+  padding: 4px 0; align-self: center;
+}
+.hero-cta-tertiary:hover { text-decoration: underline; color: var(--accent); }
 
 .provider-cards { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 20px 0; }
 .provider-card {
@@ -268,7 +302,8 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   .sidebar.open { transform: translateX(0); }
   .sidebar-close { display: inline-flex; }
   .topbar-title { font-size: 0.85rem; }
-  .welcome h1 { font-size: 1.4rem; }
+  .welcome-headline { font-size: 1.25rem; }
+  .hero-cta-primary { font-size: 1rem; padding: 12px 18px; }
 }
 
 /* ── Agent mode additions ─────────────────────────────────────────────── */

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OpenClaw — Free, Local-First AI Assistant</title>
-  <meta name="description" content="Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers." />
+  <title>OpenClaw — Your Private, Local-First AI Assistant</title>
+  <meta name="description" content="Chat, web search, files, images, and automation on your machine with Ollama or LM Studio. Free cloud fallback. No API key required." />
   <meta name="theme-color" content="#0b1020" />
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
@@ -100,8 +100,13 @@
     <div class="messages" id="messages">
       <div class="welcome">
         <div class="welcome-icon">🐾</div>
-        <h1>OpenClaw</h1>
-        <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
+        <h1 class="welcome-headline">OpenClaw — Your Private, Local-First AI Assistant</h1>
+        <p class="welcome-sub">Chat, web search, create files, generate images, automate tasks — all on your machine with Ollama or LM Studio. Free cloud fallback if needed. No API key required.</p>
+        <div class="hero-cta" role="group" aria-label="Get started">
+          <button type="button" class="hero-cta-primary" id="heroStartChat">Start Chatting Now</button>
+          <a class="hero-cta-secondary" id="heroSetupOllama" href="https://ollama.com/download" target="_blank" rel="noopener" title="Install Ollama, then run: ollama pull &lt;model&gt; and keep the app running">Setup Local Ollama (Recommended)</a>
+          <a class="hero-cta-tertiary" id="heroViewGithub" href="https://github.com/cajub311/Random-new-thing-" target="_blank" rel="noopener">View GitHub →</a>
+        </div>
         <div class="provider-cards" id="providerCards"></div>
         <div class="quick-prompts">
           <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
@@ -111,7 +116,7 @@
           <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
           <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
         </div>
-        <p class="tip" id="welcomeTip"><strong>🎉 No API key required.</strong> If you have <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> running locally, OpenClaw will auto-connect and keep everything private on your machine. Otherwise the free keyless Pollinations provider kicks in. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
+        <p class="tip" id="welcomeTip">Switch to <strong>Agent</strong> mode in the sidebar for tools (web search, files, images, memory). Type <code>/help</code> for commands.</p>
       </div>
     </div>
 

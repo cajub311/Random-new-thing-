@@ -1,6 +1,7 @@
 /* ── CloudClaw frontend app ──────────────────────────────────────────── */
 
 const API = '';  // same-origin; set full URL if backend is separate
+const REPO_URL = 'https://github.com/cajub311/Random-new-thing-';
 
 // ── State ─────────────────────────────────────────────────────────────────
 let providers   = {};
@@ -680,12 +681,25 @@ exportChatBtn.addEventListener('click', exportChat);
 // ── Render helpers ─────────────────────────────────────────────────────────
 function removeWelcome() { messagesEl.querySelector('.welcome')?.remove(); }
 
+function focusChatInput() {
+  setChatMode('auto');
+  sidebar.classList.remove('open');
+  sidebar.classList.add('collapsed');
+  userInput.focus({ preventScroll: true });
+  try { userInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch { /* ok */ }
+}
+
 function showWelcome() {
   messagesEl.innerHTML = `
     <div class="welcome">
       <div class="welcome-icon">🐾</div>
-      <h1>OpenClaw</h1>
-      <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
+      <h1 class="welcome-headline">OpenClaw — Your Private, Local-First AI Assistant</h1>
+      <p class="welcome-sub">Chat, web search, create files, generate images, automate tasks — all on your machine with Ollama or LM Studio. Free cloud fallback if needed. No API key required.</p>
+      <div class="hero-cta" role="group" aria-label="Get started">
+        <button type="button" class="hero-cta-primary" id="heroStartChat">Start Chatting Now</button>
+        <a class="hero-cta-secondary" id="heroSetupOllama" href="https://ollama.com/download" target="_blank" rel="noopener" title="Install Ollama, then run: ollama pull &lt;model&gt; and keep the app running">Setup Local Ollama (Recommended)</a>
+        <a class="hero-cta-tertiary" id="heroViewGithub" href="${escapeAttr(REPO_URL)}" target="_blank" rel="noopener">View GitHub →</a>
+      </div>
       <div class="provider-cards" id="providerCardsWelcome"></div>
       <div class="quick-prompts">
         <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
@@ -695,7 +709,7 @@ function showWelcome() {
         <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
         <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
       </div>
-      <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
+      <p class="tip">Switch to <strong>Agent</strong> mode in the sidebar for tools (web search, files, images, memory). Type <code>/help</code> for commands.</p>
     </div>`;
   const cards = document.getElementById('providerCardsWelcome');
   for (const [id, p] of Object.entries(providers)) {
@@ -936,6 +950,11 @@ clearMemoryBtn?.addEventListener('click', async () => {
 
 // ── Quick prompts on the welcome screen ────────────────────────────────────
 document.addEventListener('click', e => {
+  if (e.target.closest('#heroStartChat')) {
+    e.preventDefault();
+    focusChatInput();
+    return;
+  }
   const qp = e.target.closest('.quick-prompt');
   if (!qp) return;
   const mode = qp.dataset.mode;
