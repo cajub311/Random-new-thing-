@@ -44,6 +44,12 @@
       <select id="providerSelect"></select>
     </div>
 
+    <div class="sidebar-section" id="providerFallbackSection">
+      <label>Who can answer <button type="button" class="icon-btn mini" id="resetProviderSkips" title="Clear all exclusions">⟲</button></label>
+      <p class="provider-skip-help">Uncheck a provider to cross it off when it is broken or you do not want it. Chat and Agent still try the rest in fallback order.</p>
+      <ul id="providerSkipList" class="provider-skip-list"></ul>
+    </div>
+
     <div class="sidebar-section">
       <label>Model</label>
       <select id="modelSelect"></select>
@@ -60,7 +66,7 @@
 
     <div class="sidebar-section">
       <label>System Prompt</label>
-      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time) to complete tasks.</textarea>
+      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are OpenClaw, a powerful, friendly AI assistant. Prefer local, private inference when the user has it configured; otherwise help using the available free cloud fallbacks. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time) to complete tasks.</textarea>
     </div>
 
     <div class="sidebar-section" id="filesSection">
@@ -111,6 +117,7 @@
     <header class="topbar">
       <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
       <span class="topbar-title">OpenClaw</span>
+      <select id="headerProviderSelect" class="header-provider-select" title="Preferred provider (others used as fallbacks)" aria-label="Preferred provider"></select>
       <span class="provider-pill" id="activePill"></span>
       <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
     </header>
@@ -151,7 +158,7 @@
       </button>
     </form>
 
-    <p class="disclaimer">Free AI APIs may have rate limits. CloudClaw never stores your messages or API keys.</p>
+    <p class="disclaimer">Free AI APIs may have rate limits. OpenClaw never stores your messages or API keys.</p>
   </main>
 
   <script src="app.js"></script>

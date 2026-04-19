@@ -1,4 +1,4 @@
-/* ── CloudClaw frontend app ──────────────────────────────────────────── */
+/* ── OpenClaw frontend app ─────────────────────────────────────────────── */
 
 const API = '';  // same-origin; set full URL if backend is separate
 
@@ -14,6 +14,8 @@ let currentSessionId = null;
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
 const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
+
+const PROVIDER_SKIP_KEY = 'cc_provider_skip_ids';
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -52,6 +54,9 @@ const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
+const headerProviderSelect = document.getElementById('headerProviderSelect');
+const providerSkipList = document.getElementById('providerSkipList');
+const resetProviderSkips = document.getElementById('resetProviderSkips');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -78,6 +83,36 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+function getSkippedProviderIds() {
+  try {
+    const raw = localStorage.getItem(PROVIDER_SKIP_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr.filter(x => typeof x === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function setSkippedProviderIds(set) {
+  const arr = [...set];
+  try {
+    if (arr.length) localStorage.setItem(PROVIDER_SKIP_KEY, JSON.stringify(arr));
+    else localStorage.removeItem(PROVIDER_SKIP_KEY);
+  } catch { /* ignore */ }
+}
+
+function isProviderSkipped(id) {
+  return getSkippedProviderIds().has(id);
+}
+
+function toggleProviderSkipped(id, skipped) {
+  const s = getSkippedProviderIds();
+  if (skipped) s.add(id);
+  else s.delete(id);
+  setSkippedProviderIds(s);
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
@@ -92,6 +127,53 @@ async function init() {
     setStatus('error', 'Cannot reach server');
   }
   renderSessions();
+}
+
+function syncHeaderProviderSelect() {
+  if (!headerProviderSelect) return;
+  const v = providerSelect.value;
+  headerProviderSelect.innerHTML = '';
+  for (const opt of providerSelect.querySelectorAll('option')) {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.textContent;
+    headerProviderSelect.appendChild(o);
+  }
+  if ([...headerProviderSelect.options].some(o => o.value === v)) headerProviderSelect.value = v;
+}
+
+function orderedProviderIds() {
+  const seen = new Set();
+  const ids = [];
+  for (const id of PROVIDER_ORDER) {
+    if (providers[id]) { ids.push(id); seen.add(id); }
+  }
+  for (const id of Object.keys(providers)) {
+    if (!seen.has(id)) { ids.push(id); seen.add(id); }
+  }
+  return ids;
+}
+
+function renderProviderSkipList() {
+  if (!providerSkipList) return;
+  const skipped = getSkippedProviderIds();
+  const ids = orderedProviderIds();
+  if (ids.length === 0) {
+    providerSkipList.innerHTML = '<li class="empty">No providers loaded</li>';
+    return;
+  }
+  providerSkipList.innerHTML = ids.map(id => {
+    const p = providers[id];
+    const on = !skipped.has(id);
+    const hint = p.local ? 'local' : (p.keyless ? 'keyless' : 'cloud');
+    return `<li class="provider-skip-item${on ? '' : ' is-off'}">
+      <label class="provider-skip-label">
+        <input type="checkbox" class="provider-skip-cb" data-provider-id="${escapeAttr(id)}" ${on ? 'checked' : ''} />
+        <span class="provider-skip-name">${escapeHtml(p.name)}</span>
+        <span class="provider-skip-meta">${p.configured ? '✓' : '—'} · ${hint}</span>
+      </label>
+    </li>`;
+  }).join('');
 }
 
 function buildProviderUI() {
@@ -120,13 +202,18 @@ function buildProviderUI() {
     });
     providerCards.appendChild(card);
   }
+  syncHeaderProviderSelect();
+  renderProviderSkipList();
 }
 
 function restoreProvider() {
   const saved = localStorage.getItem('cc_provider');
   const firstAvailable = getAvailableProviders()[0]?.id;
-  const target = (saved && providers[saved]) ? saved : (firstAvailable || Object.keys(providers)[0]);
+  const savedOk = saved && providers[saved] && !isProviderSkipped(saved);
+  const anyId = orderedProviderIds()[0];
+  const target = savedOk ? saved : (firstAvailable || anyId);
   if (target) providerSelect.value = target;
+  if (headerProviderSelect && target) headerProviderSelect.value = target;
   providerSelect.dispatchEvent(new Event('change'));
 }
 
@@ -135,6 +222,8 @@ providerSelect.addEventListener('change', () => {
   const id = providerSelect.value;
   const p = providers[id];
   if (!p) return;
+
+  if (headerProviderSelect && headerProviderSelect.value !== id) headerProviderSelect.value = id;
 
   modelSelect.innerHTML = '';
   for (const m of p.models) {
@@ -158,6 +247,33 @@ providerSelect.addEventListener('change', () => {
 
   updateStatus();
   localStorage.setItem('cc_provider', id);
+});
+
+headerProviderSelect?.addEventListener('change', () => {
+  const id = headerProviderSelect.value;
+  if (providerSelect.value !== id) {
+    providerSelect.value = id;
+    providerSelect.dispatchEvent(new Event('change'));
+  }
+});
+
+providerSkipList?.addEventListener('change', e => {
+  const cb = e.target.closest('.provider-skip-cb');
+  if (!cb) return;
+  const id = cb.dataset.providerId;
+  if (!id) return;
+  toggleProviderSkipped(id, !cb.checked);
+  cb.closest('.provider-skip-item')?.classList.toggle('is-off', !cb.checked);
+  updateStatus();
+  if (isProviderSkipped(providerSelect.value)) {
+    restoreProvider();
+  }
+});
+
+resetProviderSkips?.addEventListener('click', () => {
+  setSkippedProviderIds(new Set());
+  renderProviderSkipList();
+  updateStatus();
 });
 
 apiKeyInput.addEventListener('input', () => {
@@ -190,10 +306,12 @@ function setChatMode(mode) {
 
 // ── Available providers helper ─────────────────────────────────────────────
 function getAvailableProviders({ toolsOnly = false } = {}) {
+  const skipped = getSkippedProviderIds();
   const preferred = providerSelect.value;
   const ordered = [preferred, ...PROVIDER_ORDER.filter(id => id !== preferred)];
   return ordered
     .filter(id => providers[id])
+    .filter(id => !skipped.has(id))
     .filter(id => !toolsOnly || providers[id].supportsTools)
     .map(id => {
       const p = providers[id];
@@ -378,54 +496,63 @@ async function sendAgent(msgs) {
     appendMessage('assistant', 'Agent mode needs a tool-capable provider (Pollinations, Groq, or Together).', true);
     return;
   }
-  const { id, key } = available[0];
-  const name = providers[id].name;
-  const typingId = appendTyping(`${name} (Agent)`);
-  currentController = new AbortController();
-  setLoading(true, true);
 
-  try {
-    const res = await fetch(`${API}/api/agent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        provider: id,
-        model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
-        apiKey: key || undefined,
-        messages: [
-          { role: 'system', content: systemPrompt.value || 'You are a helpful assistant with tools.' },
-          ...msgs,
-        ],
-        maxSteps: 6,
-      }),
-      signal: currentController.signal,
-    });
-    const data = await res.json();
-    removeTyping(typingId);
-    if (!res.ok || data.error) {
-      appendMessage('assistant', `Agent error: ${data.error || res.statusText}`, true, id);
-      setStatus('error', 'Agent failed');
+  for (let i = 0; i < available.length; i++) {
+    const { id, key } = available[i];
+    const name = providers[id].name;
+    if (i > 0) setStatus('warning', `Trying ${name} (Agent)…`);
+
+    const typingId = appendTyping(`${name} (Agent)`);
+    currentController = new AbortController();
+    setLoading(true, true);
+
+    try {
+      const res = await fetch(`${API}/api/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: id,
+          model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
+          apiKey: key || undefined,
+          messages: [
+            { role: 'system', content: systemPrompt.value || 'You are a helpful assistant with tools.' },
+            ...msgs,
+          ],
+          maxSteps: 6,
+        }),
+        signal: currentController.signal,
+      });
+      const data = await res.json();
+      removeTyping(typingId);
+      if (!res.ok || data.error) {
+        appendMessage('assistant', `Agent error (${name}): ${data.error || res.statusText}`, true, id);
+        setStatus('warning', `${name} failed — trying next…`);
+        continue;
+      }
+      appendAgentMessage(id, data);
+      messages.push({ role: 'assistant', content: data.reply || '' });
+      setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
+      activePill.textContent = `🤖 ${name}`;
+      activePill.className = 'provider-pill online';
+      saveCurrentSession();
+      loadFiles();
       return;
+    } catch (err) {
+      removeTyping(typingId);
+      if (err.name === 'AbortError') {
+        setStatus('online', 'Stopped');
+        return;
+      }
+      appendMessage('assistant', `Agent error (${name}): ${err.message}`, true, id);
+      setStatus('warning', `${name} failed — trying next…`);
+    } finally {
+      currentController = null;
+      setLoading(false);
     }
-    appendAgentMessage(id, data);
-    messages.push({ role: 'assistant', content: data.reply || '' });
-    setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
-    activePill.textContent = `🤖 ${name}`;
-    activePill.className = 'provider-pill online';
-    saveCurrentSession();
-    loadFiles();
-  } catch (err) {
-    removeTyping(typingId);
-    if (err.name !== 'AbortError') {
-      appendMessage('assistant', `Agent error: ${err.message}`, true);
-      setStatus('error', 'Agent failed');
-    } else {
-      setStatus('online', 'Stopped');
-    }
-  } finally {
-    currentController = null;
-    setLoading(false);
   }
+
+  appendMessage('assistant', 'All tool-capable providers failed. Open the menu and cross off broken ones, or pick another provider in the header.', true);
+  setStatus('error', 'All agent providers failed');
 }
 
 // ── Ask All mode: fan out, show each response with badge ──────────────────
@@ -705,10 +832,11 @@ function snapshot() {
   let mem = [];
   try { mem = JSON.parse(localStorage.getItem('cc_memory') || '[]'); } catch {}
   return {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     sessions,
     memory: mem,
+    providerSkipIds: [...getSkippedProviderIds()],
     settings: {
       provider: localStorage.getItem('cc_provider') || '',
       mode: localStorage.getItem('cc_mode') || 'auto',
@@ -761,6 +889,11 @@ async function pullSnapshot() {
         }).catch(() => {});
       }
       loadMemory();
+    }
+    if (Array.isArray(snap.providerSkipIds)) {
+      setSkippedProviderIds(new Set(snap.providerSkipIds.filter(x => typeof x === 'string')));
+      renderProviderSkipList();
+      if (isProviderSkipped(providerSelect.value)) restoreProvider();
     }
     setSyncStatus('pulled', 'on');
   } catch (e) {
@@ -1267,9 +1400,9 @@ sessionsList?.addEventListener('click', e => {
 function exportChat() {
   if (messages.length === 0) return;
   const title = sessionTitle(messages);
-  const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
+  const md = `# ${title}\n\n*Exported from OpenClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
-      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
+      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**OpenClaw**' : `**${m.role}**`;
       return `### ${who}\n\n${m.content}\n`;
     }).join('\n');
   const blob = new Blob([md], { type: 'text/markdown' });
@@ -1286,7 +1419,15 @@ function exportChat() {
 // ── Persist settings ───────────────────────────────────────────────────────
 function loadSettings() {
   const sys = localStorage.getItem('cc_system');
-  if (sys) systemPrompt.value = sys;
+  if (sys) {
+    if (/cloudclaw/i.test(sys)) {
+      const migrated = sys.replace(/cloudclaw/gi, 'OpenClaw');
+      systemPrompt.value = migrated;
+      try { localStorage.setItem('cc_system', migrated); } catch {}
+    } else {
+      systemPrompt.value = sys;
+    }
+  }
   const temp = localStorage.getItem('cc_temp');
   if (temp) { tempRange.value = temp; tempVal.textContent = temp; }
   const mode = localStorage.getItem('cc_mode');
@@ -1312,6 +1453,6 @@ setInterval(async () => {
       if (providers[id]?.configured !== p.configured) changed = true;
     }
     providers = next;
-    if (changed) { buildProviderUI(); updateStatus(); }
+    if (changed) { buildProviderUI(); renderProviderSkipList(); updateStatus(); }
   } catch { /* ignore */ }
 }, 30_000);
