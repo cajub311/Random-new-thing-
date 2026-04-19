@@ -11,7 +11,7 @@ import { existsSync } from 'fs';
 import 'dotenv/config';
 
 import { PROVIDERS, DEFAULT_ORDER } from './lib/providers.js';
-import { chatCompletion, callOpenAI, probeLocal } from './lib/llm.js';
+import { chatCompletion, callOpenAI, probeLocal, clampGenerationOpts } from './lib/llm.js';
 import { loadSkills } from './skills/index.js';
 import { runAgent, SYSTEM_PROMPT, buildMemoryBrief } from './lib/brain.js';
 import { createMemory } from './lib/memory.js';
@@ -124,7 +124,8 @@ app.get('/api/providers', (req, res) => {
 
 // ── Route: POST /api/chat ─────────────────────────────────────────────────
 app.post('/api/chat', async (req, res) => {
-  const { provider: providerId = DEFAULT_ORDER[0], model, messages, apiKey } = req.body;
+  const { provider: providerId = DEFAULT_ORDER[0], model, messages, apiKey, temperature, max_tokens } = req.body;
+  const gen = clampGenerationOpts({ temperature, max_tokens });
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages array is required' });
@@ -141,7 +142,7 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
-    const msg = await chatCompletion(provider, messages, model, key);
+    const msg = await chatCompletion(provider, messages, model, key, gen);
     res.json({ reply: msg.content, provider: provider.name, model: model || provider.defaultModel });
   } catch (err) {
     req.log.error('chat failed', { provider: providerId, err: err.message });
@@ -151,7 +152,8 @@ app.post('/api/chat', async (req, res) => {
 
 // ── Route: POST /api/chat/stream ──────────────────────────────────────────
 app.post('/api/chat/stream', async (req, res) => {
-  const { provider: providerId = DEFAULT_ORDER[0], model, messages, apiKey } = req.body;
+  const { provider: providerId = DEFAULT_ORDER[0], model, messages, apiKey, temperature, max_tokens } = req.body;
+  const gen = clampGenerationOpts({ temperature, max_tokens });
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages array is required' });
@@ -178,7 +180,7 @@ app.post('/api/chat/stream', async (req, res) => {
 
   if (provider.format !== 'openai') {
     try {
-      const msg = await chatCompletion(provider, messages, model, key);
+      const msg = await chatCompletion(provider, messages, model, key, gen);
       send('delta', { content: msg.content || '' });
       send('done', { provider: provider.name, model: model || provider.defaultModel });
     } catch (err) {
@@ -210,7 +212,13 @@ app.post('/api/chat/stream', async (req, res) => {
             'Content-Type': 'application/json',
             ...(key ? { Authorization: `Bearer ${key}` } : {}),
           },
-          body: JSON.stringify({ model: m, messages, stream: true, max_tokens: 4096 }),
+          body: JSON.stringify({
+            model: m,
+            messages,
+            stream: true,
+            max_tokens: gen.max_tokens,
+            temperature: gen.temperature,
+          }),
         });
         if (r.ok && r.body) { upstream = r; usedModel = m; break; }
         lastErr = new Error(`upstream status ${r.status}`);
@@ -265,7 +273,16 @@ app.post('/api/chat/stream', async (req, res) => {
 
 // ── Route: POST /api/agent ────────────────────────────────────────────────
 app.post('/api/agent', async (req, res) => {
-  const { provider: providerId = DEFAULT_ORDER[0], model, messages, apiKey, maxSteps = 8 } = req.body;
+  const {
+    provider: providerId = DEFAULT_ORDER[0],
+    model,
+    messages,
+    apiKey,
+    maxSteps = 8,
+    temperature,
+    max_tokens,
+  } = req.body;
+  const gen = clampGenerationOpts({ temperature, max_tokens });
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages array is required' });
@@ -318,6 +335,8 @@ app.post('/api/agent', async (req, res) => {
       toolDefs: TOOL_DEFS,
       maxSteps: Math.min(Math.max(1, maxSteps | 0), 12),
       ctx,
+      temperature: gen.temperature,
+      max_tokens: gen.max_tokens,
     });
 
     req.log.info('agent done', { steps: result.steps, provider: providerId });

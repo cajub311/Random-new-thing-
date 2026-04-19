@@ -17,11 +17,11 @@
 </head>
 <body>
   <!-- ── Sidebar ──────────────────────────────────────────────── -->
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar" id="sidebar" aria-label="Settings and conversations">
     <div class="sidebar-header">
-      <button class="icon-btn sidebar-close" id="sidebarClose" title="Back to chat" aria-label="Back to chat">←</button>
+      <button type="button" class="icon-btn sidebar-close" id="sidebarClose" title="Back to chat" aria-label="Back to chat">←</button>
       <span class="logo">🐾 OpenClaw</span>
-      <button class="icon-btn" id="newChatBtn" title="New chat">＋</button>
+      <button type="button" class="icon-btn" id="newChatBtn" title="New chat" aria-label="New chat">＋</button>
     </div>
 
     <div class="sidebar-section" id="sessionsSection">
@@ -31,10 +31,10 @@
 
     <div class="sidebar-section">
       <label>Chat Mode</label>
-      <div class="mode-toggle" id="modeToggle">
-        <button class="mode-btn active" data-mode="auto" title="Chat with auto-fallback between providers">💬 Chat</button>
-        <button class="mode-btn" data-mode="agent" title="AI assistant with tools: web search, file creation, email drafts">🤖 Agent</button>
-        <button class="mode-btn" data-mode="ask-all" title="Ask all configured providers at once">✦ Ask All</button>
+      <div class="mode-toggle" id="modeToggle" role="group" aria-label="Chat mode">
+        <button type="button" class="mode-btn active" data-mode="auto" title="Chat with auto-fallback between providers" aria-pressed="true">💬 Chat</button>
+        <button type="button" class="mode-btn" data-mode="agent" title="AI assistant with tools: web search, file creation, email drafts" aria-pressed="false">🤖 Agent</button>
+        <button type="button" class="mode-btn" data-mode="ask-all" title="Ask all configured providers at once" aria-pressed="false">✦ Ask All</button>
       </div>
       <span class="mode-hint" id="modeHint">Chat mode — tries providers in order, auto-fallback on failure</span>
     </div>
@@ -42,11 +42,6 @@
     <div class="sidebar-section">
       <label>Preferred Provider</label>
       <select id="providerSelect"></select>
-    </div>
-
-    <div class="sidebar-section">
-      <label>Model</label>
-      <select id="modelSelect"></select>
     </div>
 
     <div class="sidebar-section" id="keySection">
@@ -77,11 +72,6 @@
       <ul id="memoryList" class="memory-list"><li class="empty">No memories yet</li></ul>
     </div>
 
-    <div class="sidebar-section">
-      <label>Temperature: <span id="tempVal">0.7</span></label>
-      <input type="range" id="tempRange" min="0" max="2" step="0.1" value="0.7" />
-    </div>
-
     <div class="sidebar-section" id="syncSection">
       <label>
         Cloud Backup
@@ -108,46 +98,86 @@
 
   <!-- ── Main chat area ───────────────────────────────────────── -->
   <main class="main">
-    <header class="topbar">
-      <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
-      <span class="topbar-title">OpenClaw</span>
-      <span class="provider-pill" id="activePill"></span>
-      <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
+    <header class="topbar" role="banner">
+      <button type="button" class="icon-btn" id="sidebarToggle" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar" title="Toggle sidebar">☰</button>
+      <span class="topbar-title" id="appTitle">OpenClaw</span>
+      <span class="provider-pill" id="activePill" aria-live="polite"></span>
+      <button type="button" class="icon-btn" id="settingsBtn" aria-label="Open settings" aria-haspopup="dialog" aria-controls="settingsDrawer" title="Settings (generation and model)">⚙</button>
+      <button type="button" class="icon-btn" id="clearBtn" aria-label="Clear conversation" title="Clear conversation">🗑</button>
     </header>
 
-    <div class="messages" id="messages">
+    <div class="drawer-backdrop" id="settingsBackdrop" hidden aria-hidden="true"></div>
+    <div class="settings-drawer" id="settingsDrawer" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-hidden="true" hidden tabindex="-1">
+      <div class="settings-drawer-head">
+        <h2 class="settings-drawer-title" id="settingsTitle">Settings</h2>
+        <button type="button" class="icon-btn" id="settingsCloseBtn" aria-label="Close settings">✕</button>
+      </div>
+      <div class="settings-drawer-body">
+        <div class="settings-field">
+          <label for="tempRange">
+            Temperature <span id="tempVal" class="settings-value" aria-hidden="true">0.7</span>
+            <span class="settings-tooltip" tabindex="0" role="note" aria-label="Temperature controls randomness. Lower values (near 0) give more focused, deterministic answers. Higher values (up to 2) allow more creative and varied wording; very high settings can be less factual." title="Lower = more focused and predictable. Higher = more creative and varied; may be less precise.">ⓘ</span>
+          </label>
+          <input type="range" id="tempRange" min="0" max="2" step="0.1" value="0.7" aria-valuemin="0" aria-valuemax="2" aria-valuenow="0.7" aria-describedby="tempHelp" />
+          <p class="settings-help" id="tempHelp">Lower values produce steadier, more predictable replies. Higher values increase variety and creativity; use a moderate value for most tasks.</p>
+        </div>
+        <div class="settings-field">
+          <label for="maxTokensInput">Max tokens</label>
+          <input type="number" id="maxTokensInput" min="256" max="128000" step="256" value="4096" inputmode="numeric" aria-describedby="maxTokensHelp" />
+          <p class="settings-help" id="maxTokensHelp">Upper bound on how long each model reply can be (input + output limits still apply per provider).</p>
+        </div>
+        <div class="settings-field" id="settingsModelField">
+          <label for="modelSelect">Model</label>
+          <select id="modelSelect" aria-describedby="modelHelp"></select>
+          <p class="settings-help" id="modelHelp">Models for the provider selected in the sidebar. Switch provider there to change the list.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="palette-backdrop" id="paletteBackdrop" hidden aria-hidden="true"></div>
+    <div class="command-palette" id="commandPalette" role="dialog" aria-modal="true" aria-labelledby="paletteTitle" aria-hidden="true" hidden>
+      <div class="palette-inner">
+        <label for="paletteSearch" id="paletteTitle" class="palette-label">Quick actions</label>
+        <input type="search" id="paletteSearch" class="palette-search" autocomplete="off" spellcheck="false" placeholder="Type to filter… (Esc to close)" aria-describedby="paletteHint" />
+        <p id="paletteHint" class="palette-hint">Use arrow keys to move, Enter to run. <kbd>⌘</kbd><kbd>K</kbd> or <kbd>Ctrl</kbd><kbd>K</kbd> to toggle.</p>
+        <ul class="palette-list" id="paletteList" role="listbox"></ul>
+      </div>
+    </div>
+
+    <div class="messages" id="messages" role="log" aria-relevant="additions" aria-live="polite" aria-atomic="false" aria-label="Chat messages">
       <div class="welcome">
         <div class="welcome-icon">🐾</div>
         <h1>OpenClaw</h1>
         <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
         <div class="provider-cards" id="providerCards"></div>
-        <div class="quick-prompts">
-          <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
-          <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
-          <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+        <div class="quick-prompts" role="group" aria-label="Example prompts">
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
+          <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
+          <button type="button" class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
         </div>
         <p class="tip" id="welcomeTip"><strong>🎉 No API key required.</strong> If you have <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> running locally, OpenClaw will auto-connect and keep everything private on your machine. Otherwise the free keyless Pollinations provider kicks in. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
       </div>
     </div>
 
-    <form class="input-area" id="chatForm">
-      <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach file">📎</button>
-      <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.js,.py,.html,.css,.json,.csv,image/*" />
-      <button type="button" class="icon-btn mic-btn" id="micBtn" title="Voice input (hold or click)" hidden>🎙</button>
+    <form class="input-area" id="chatForm" aria-label="Send a message">
+      <button type="button" class="icon-btn attach-btn" id="attachBtn" aria-label="Attach a file" title="Attach a file">📎</button>
+      <input type="file" id="fileInput" hidden accept=".txt,.md,.js,.py,.html,.css,.json,.csv,image/*" />
+      <button type="button" class="icon-btn mic-btn" id="micBtn" aria-label="Voice input" title="Voice input" hidden>🎙</button>
       <textarea
         id="userInput"
         placeholder="Ask anything… (Shift+Enter for new line, type / for commands)"
         rows="1"
         autocomplete="off"
+        aria-label="Message to send"
       ></textarea>
-      <div class="slash-menu" id="slashMenu" hidden></div>
-      <button type="button" class="send-btn stop-btn" id="stopBtn" title="Stop" style="display:none">■</button>
-      <button type="submit" class="send-btn" id="sendBtn" title="Send">
-        <span id="sendIcon">➤</span>
-        <span id="loadingIcon" style="display:none">⏳</span>
+      <div class="slash-menu" id="slashMenu" role="listbox" hidden aria-label="Slash commands"></div>
+      <button type="button" class="send-btn stop-btn" id="stopBtn" aria-label="Stop generating" title="Stop" style="display:none">■</button>
+      <button type="submit" class="send-btn" id="sendBtn" aria-label="Send message" title="Send message">
+        <span id="sendIcon" aria-hidden="true">➤</span>
+        <span id="loadingIcon" style="display:none" aria-hidden="true">⏳</span>
       </button>
     </form>
 
