@@ -153,6 +153,67 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 .welcome p { color: var(--text-muted); margin: 10px 0; line-height: 1.6; }
 .tip { font-size: 0.85rem; }
 
+/* ── Trust strip (welcome + sidebar) ─────────────────────────────────── */
+.trust-strip {
+  margin: 16px 0 12px;
+  padding: 0 4px;
+}
+.welcome .trust-strip { margin: 18px 0 14px; }
+.trust-strip-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  align-items: stretch;
+}
+.trust-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.25;
+  text-align: left;
+  max-width: 200px;
+  transition: border-color var(--transition), background var(--transition);
+}
+.trust-card:hover {
+  border-color: rgba(108, 99, 255, 0.45);
+  background: var(--surface);
+}
+.trust-card-icon {
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.trust-card-text { color: var(--text-muted); font-weight: 600; }
+
+.sidebar-trust {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.sidebar-trust .trust-strip { margin: 0; padding: 0; }
+.sidebar-trust .trust-strip-inner {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.sidebar-trust .trust-card {
+  max-width: none;
+  padding: 7px 10px;
+  font-size: 0.68rem;
+}
+.sidebar-trust .trust-card-icon { font-size: 0.95rem; }
+
+@media (max-width: 640px) {
+  .trust-card { max-width: none; flex: 1 1 calc(50% - 4px); }
+}
+
 .provider-cards { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 20px 0; }
 .provider-card {
   background: var(--surface2); border: 1px solid var(--border);

@@ -39,6 +39,8 @@
       <span class="mode-hint" id="modeHint">Chat mode — tries providers in order, auto-fallback on failure</span>
     </div>
 
+    <div class="sidebar-section sidebar-trust" data-trust-strip></div>
+
     <div class="sidebar-section">
       <label>Preferred Provider</label>
       <select id="providerSelect"></select>
@@ -120,6 +122,7 @@
         <div class="welcome-icon">🐾</div>
         <h1>OpenClaw</h1>
         <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
+        <div data-trust-strip></div>
         <div class="provider-cards" id="providerCards"></div>
         <div class="quick-prompts">
           <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>

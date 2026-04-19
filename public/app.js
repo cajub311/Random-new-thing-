@@ -78,6 +78,39 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+// ── Trust / privacy strip (shared markup for welcome + sidebar) ───────────
+const TRUST_STRIP_HTML = `
+  <section class="trust-strip" aria-label="Trust and privacy">
+    <div class="trust-strip-inner">
+      <div class="trust-card" title="Inspect and self-host the code">
+        <span class="trust-card-icon" aria-hidden="true">📖</span>
+        <span class="trust-card-text">100% Open Source</span>
+      </div>
+      <div class="trust-card" title="Local models keep chats on your device">
+        <span class="trust-card-icon" aria-hidden="true">🔒</span>
+        <span class="trust-card-text">Private by default (local-first)</span>
+      </div>
+      <div class="trust-card" title="Keyless cloud when no local LLM is available">
+        <span class="trust-card-icon" aria-hidden="true">☁️</span>
+        <span class="trust-card-text">Free cloud fallback</span>
+      </div>
+      <div class="trust-card" title="Agent mode with tools and long-term memory">
+        <span class="trust-card-icon" aria-hidden="true">🧠</span>
+        <span class="trust-card-text">Agent mode + tools + memory</span>
+      </div>
+      <div class="trust-card" title="This deployment does not persist your conversations">
+        <span class="trust-card-icon" aria-hidden="true">🚫</span>
+        <span class="trust-card-text">No data stored</span>
+      </div>
+    </div>
+  </section>`;
+
+function fillTrustStripSlots(root = document) {
+  root.querySelectorAll('[data-trust-strip]').forEach(el => {
+    el.innerHTML = TRUST_STRIP_HTML;
+  });
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
@@ -92,6 +125,7 @@ async function init() {
     setStatus('error', 'Cannot reach server');
   }
   renderSessions();
+  fillTrustStripSlots();
 }
 
 function buildProviderUI() {
@@ -829,6 +863,7 @@ function showWelcome() {
       <div class="welcome-icon">🐾</div>
       <h1>OpenClaw</h1>
       <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
+      <div data-trust-strip></div>
       <div class="provider-cards" id="providerCardsWelcome"></div>
       <div class="quick-prompts">
         <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
@@ -840,6 +875,7 @@ function showWelcome() {
       </div>
       <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
     </div>`;
+  fillTrustStripSlots(messagesEl);
   const cards = document.getElementById('providerCardsWelcome');
   for (const [id, p] of Object.entries(providers)) {
     const card = document.createElement('div');
