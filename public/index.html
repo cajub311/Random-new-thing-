@@ -172,6 +172,28 @@
     <p class="disclaimer">Free AI APIs may have rate limits. CloudClaw never stores your messages or API keys.</p>
   </main>
 
+  <dialog class="welcome-modal" id="welcomeModal" aria-labelledby="welcomeModalTitle">
+    <div class="welcome-modal-box">
+      <button type="button" class="welcome-modal-dismiss icon-btn" id="welcomeModalDismiss" aria-label="Close welcome">×</button>
+      <h2 id="welcomeModalTitle" class="welcome-modal-headline">Welcome to OpenClaw — your private AI assistant</h2>
+      <p class="welcome-modal-lead">Tap a quick start to run it in <strong>Agent</strong> mode, or close to type your own.</p>
+      <div class="welcome-modal-cards">
+        <button type="button" class="welcome-modal-card" data-welcome-prompt="Search the web for latest AI news and summarize">
+          <span class="welcome-modal-card-icon" aria-hidden="true">🔎</span>
+          <span class="welcome-modal-card-label">Search the web for latest AI news and summarize</span>
+        </button>
+        <button type="button" class="welcome-modal-card" data-welcome-prompt="Generate an image of a cyberpunk city at night">
+          <span class="welcome-modal-card-icon" aria-hidden="true">🎨</span>
+          <span class="welcome-modal-card-label">Generate an image of a cyberpunk city at night</span>
+        </button>
+        <button type="button" class="welcome-modal-card" data-welcome-prompt="Create a file with my daily todo list">
+          <span class="welcome-modal-card-icon" aria-hidden="true">📝</span>
+          <span class="welcome-modal-card-label">Create a file with my daily todo list</span>
+        </button>
+      </div>
+    </div>
+  </dialog>
+
   <nav class="bottom-nav" id="bottomNav" aria-label="Mobile navigation">
     <button type="button" class="bottom-nav-btn" id="bottomNavChat" aria-current="page">
       <span class="bottom-nav-icon" aria-hidden="true">💬</span>

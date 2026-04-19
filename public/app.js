@@ -61,6 +61,8 @@ const bottomNavChat    = document.getElementById('bottomNavChat');
 const bottomNavHistory = document.getElementById('bottomNavHistory');
 const bottomNavSettings= document.getElementById('bottomNavSettings');
 const sheetBackdrop    = document.getElementById('sheetBackdrop');
+const welcomeModal     = document.getElementById('welcomeModal');
+const welcomeModalDismiss = document.getElementById('welcomeModalDismiss');
 const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
@@ -1688,11 +1690,58 @@ function loadSettings() {
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
 
+const WELCOME_MODAL_KEY = 'oc_welcome_modal_seen';
+
+function maybeShowWelcomeModal() {
+  if (!welcomeModal) return;
+  try {
+    if (localStorage.getItem(WELCOME_MODAL_KEY) === '1') return;
+  } catch {
+    return;
+  }
+  requestAnimationFrame(() => {
+    try {
+      if (!welcomeModal.open) welcomeModal.showModal();
+    } catch {
+      /* showModal unsupported */
+    }
+  });
+}
+
+welcomeModalDismiss?.addEventListener('click', () => {
+  welcomeModal?.close();
+});
+
+welcomeModal?.addEventListener('click', e => {
+  const card = e.target.closest('[data-welcome-prompt]');
+  if (!card) return;
+  const prompt = card.getAttribute('data-welcome-prompt');
+  if (!prompt) return;
+  setChatMode('agent');
+  userInput.value = prompt;
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
+  welcomeModal.close();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    });
+  });
+});
+
+welcomeModal?.addEventListener('close', () => {
+  try {
+    localStorage.setItem(WELCOME_MODAL_KEY, '1');
+  } catch { /* ignore */ }
+  userInput?.focus();
+});
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 init().then(() => {
   loadFiles();
   loadMemory();
   syncBottomNavState();
+  maybeShowWelcomeModal();
 });
 // Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
 setInterval(async () => {
