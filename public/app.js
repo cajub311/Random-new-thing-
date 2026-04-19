@@ -599,6 +599,58 @@ document.getElementById('sidebarClose')?.addEventListener('click', () => {
   sidebar.classList.add('collapsed');
 });
 
+// ── Voice input (Web Speech API) ──────────────────────────────────────────
+(() => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtn = document.getElementById('micBtn');
+  if (!SR || !micBtn) return;
+  micBtn.hidden = false;
+
+  const rec = new SR();
+  rec.continuous = false;
+  rec.interimResults = true;
+  rec.lang = navigator.language || 'en-US';
+
+  let listening = false;
+  let baseText = '';
+
+  rec.addEventListener('result', (e) => {
+    let interim = '';
+    let final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t;
+      else interim += t;
+    }
+    userInput.value = (baseText + ' ' + final + interim).trim();
+    userInput.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  rec.addEventListener('end', () => {
+    listening = false;
+    micBtn.classList.remove('recording');
+    micBtn.textContent = '🎙';
+  });
+  rec.addEventListener('error', () => {
+    listening = false;
+    micBtn.classList.remove('recording');
+    micBtn.textContent = '🎙';
+  });
+
+  micBtn.addEventListener('click', () => {
+    if (listening) { rec.stop(); return; }
+    baseText = userInput.value.trim();
+    try { rec.start(); listening = true; micBtn.classList.add('recording'); micBtn.textContent = '⏺'; }
+    catch { /* already started */ }
+  });
+})();
+
+// ── PWA: register service worker ──────────────────────────────────────────
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
 stopBtn.addEventListener('click', () => {
   if (currentController) currentController.abort();
 });
@@ -632,8 +684,8 @@ function showWelcome() {
   messagesEl.innerHTML = `
     <div class="welcome">
       <div class="welcome-icon">🐾</div>
-      <h1>Welcome to CloudClaw</h1>
-      <p>Free, open AI — powered by the best no-cost API providers.</p>
+      <h1>OpenClaw</h1>
+      <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
       <div class="provider-cards" id="providerCardsWelcome"></div>
       <div class="quick-prompts">
         <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
@@ -643,7 +695,7 @@ function showWelcome() {
         <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
         <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
       </div>
-      <p class="tip"><strong>🎉 No API key required!</strong> CloudClaw works out of the box with the free keyless Pollinations provider. Type <code>/help</code> for commands.</p>
+      <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
     </div>`;
   const cards = document.getElementById('providerCardsWelcome');
   for (const [id, p] of Object.entries(providers)) {
