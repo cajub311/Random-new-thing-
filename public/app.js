@@ -1,4 +1,4 @@
-/* ── CloudClaw frontend app ──────────────────────────────────────────── */
+/* ── OpenClaw frontend app ─────────────────────────────────────────────── */
 
 const API = '';  // same-origin; set full URL if backend is separate
 
@@ -11,9 +11,18 @@ let pendingFileText = null;
 let currentController = null;    // AbortController for in-flight requests
 let sessions    = [];            // [{id, title, mode, messages, updated}]
 let currentSessionId = null;
+let lastFailedProviderId = null; // last backend that errored — status pill / “Turn off” targets this
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
-const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
+const PROVIDER_ORDER = [
+  'ollama', 'lmstudio', 'llamacpp', 'pollinations',
+  'groq', 'cerebras', 'openrouter', 'gemini', 'together', 'xai', 'anthropic',
+  'deepseek', 'cohere', 'huggingface',
+];
+
+const PROVIDER_SKIP_KEY = 'cc_provider_skip_ids';
+const MODEL_ALLOW_PREFIX = 'cc_models_allowed_'; // JSON array per provider; empty = all models
+const ASK_ALL_IDS_KEY = 'cc_ask_all_provider_ids'; // JSON array; absent = use all available
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -52,6 +61,11 @@ const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
+const headerProviderSelect = document.getElementById('headerProviderSelect');
+const providerSkipList = document.getElementById('providerSkipList');
+const resetProviderSkips = document.getElementById('resetProviderSkips');
+const modelAllowWrap = document.getElementById('modelAllowWrap');
+const askAllProviderList = document.getElementById('askAllProviderList');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -78,6 +92,182 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+function getSkippedProviderIds() {
+  try {
+    const raw = localStorage.getItem(PROVIDER_SKIP_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr.filter(x => typeof x === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function setSkippedProviderIds(set) {
+  const arr = [...set];
+  try {
+    if (arr.length) localStorage.setItem(PROVIDER_SKIP_KEY, JSON.stringify(arr));
+    else localStorage.removeItem(PROVIDER_SKIP_KEY);
+  } catch { /* ignore */ }
+}
+
+function isProviderSkipped(id) {
+  return getSkippedProviderIds().has(id);
+}
+
+function toggleProviderSkipped(id, skipped) {
+  const s = getSkippedProviderIds();
+  if (skipped) s.add(id);
+  else s.delete(id);
+  setSkippedProviderIds(s);
+}
+
+function getModelsAllowedSet(providerId) {
+  const p = providers[providerId];
+  if (!p?.models?.length) return null;
+  try {
+    const raw = localStorage.getItem(MODEL_ALLOW_PREFIX + providerId);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return null;
+    const allowed = new Set(arr.filter(m => typeof m === 'string' && p.models.includes(m)));
+    if (allowed.size === 0) return null;
+    return allowed;
+  } catch {
+    return null;
+  }
+}
+
+function persistModelsAllowed(providerId, setOrNull) {
+  const p = providers[providerId];
+  if (!p?.models?.length) return;
+  const key = MODEL_ALLOW_PREFIX + providerId;
+  if (!setOrNull || setOrNull.size === 0 || setOrNull.size >= p.models.length) {
+    try { localStorage.removeItem(key); } catch {}
+    return;
+  }
+  try { localStorage.setItem(key, JSON.stringify([...setOrNull])); } catch {}
+}
+
+function getEffectiveModelForProvider(providerId) {
+  const p = providers[providerId];
+  if (!p?.models?.length) return p?.defaultModel || '';
+  const allowed = getModelsAllowedSet(providerId);
+  const preferred = providerSelect.value === providerId ? modelSelect.value : null;
+  if (!allowed) return preferred && p.models.includes(preferred) ? preferred : p.defaultModel;
+  if (preferred && allowed.has(preferred)) return preferred;
+  for (const m of p.models) if (allowed.has(m)) return m;
+  return p.defaultModel;
+}
+
+function renderModelAllowList() {
+  if (!modelAllowWrap) return;
+  const id = providerSelect.value;
+  const p = providers[id];
+  if (!p?.models?.length) {
+    modelAllowWrap.innerHTML = '';
+    modelAllowWrap.hidden = true;
+    return;
+  }
+  modelAllowWrap.hidden = false;
+  const allowed = getModelsAllowedSet(id);
+  const allOn = !allowed || allowed.size >= p.models.length;
+  modelAllowWrap.innerHTML = p.models.map(m => {
+    const on = allOn || (allowed && allowed.has(m));
+    return `<label class="model-allow-item"><input type="checkbox" class="model-allow-cb" data-model="${escapeAttr(m)}" ${on ? 'checked' : ''} /><span>${escapeHtml(m)}</span></label>`;
+  }).join('');
+}
+
+function refreshModelSelectOptions() {
+  const id = providerSelect.value;
+  const p = providers[id];
+  if (!p?.models?.length) return;
+  const allowed = getModelsAllowedSet(id);
+  const prev = modelSelect.value;
+  modelSelect.innerHTML = '';
+  const list = (!allowed || allowed.size >= p.models.length) ? p.models : p.models.filter(m => allowed.has(m));
+  for (const m of list) {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    modelSelect.appendChild(opt);
+  }
+  if (list.includes(prev)) modelSelect.value = prev;
+  else if (list.includes(p.defaultModel)) modelSelect.value = p.defaultModel;
+  else if (list[0]) modelSelect.value = list[0];
+}
+
+function collectModelAllowModelIds() {
+  const out = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(MODEL_ALLOW_PREFIX)) {
+        const pid = k.slice(MODEL_ALLOW_PREFIX.length);
+        const raw = localStorage.getItem(k);
+        if (!raw) continue;
+        try {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.length) out[pid] = arr.filter(x => typeof x === 'string');
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+  return out;
+}
+
+function getAskAllProviderIdsOverride() {
+  try {
+    const raw = localStorage.getItem(ASK_ALL_IDS_KEY);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) && arr.length ? arr.filter(x => typeof x === 'string') : null;
+  } catch {
+    return null;
+  }
+}
+
+function setAskAllProviderIdsOverride(idsOrNull) {
+  try {
+    if (!idsOrNull || !idsOrNull.length) localStorage.removeItem(ASK_ALL_IDS_KEY);
+    else localStorage.setItem(ASK_ALL_IDS_KEY, JSON.stringify(idsOrNull));
+  } catch { /* ignore */ }
+  renderAskAllProviderList();
+  updateStatus();
+}
+
+function getProvidersEligibleForAskAll() {
+  return getAvailableProviders();
+}
+
+function getAskAllTargets() {
+  const elig = getProvidersEligibleForAskAll();
+  const sub = getAskAllProviderIdsOverride();
+  if (!sub) return elig;
+  const set = new Set(sub);
+  const filtered = elig.filter(x => set.has(x.id));
+  return filtered.length ? filtered : elig;
+}
+
+function renderAskAllProviderList() {
+  if (!askAllProviderList) return;
+  const elig = getProvidersEligibleForAskAll();
+  const sub = getAskAllProviderIdsOverride();
+  if (elig.length === 0) {
+    askAllProviderList.innerHTML = '<li class="empty">No providers available</li>';
+    return;
+  }
+  const activeSet = sub ? new Set(sub) : null;
+  askAllProviderList.innerHTML = elig.map(({ id }) => {
+    const p = providers[id];
+    const on = !activeSet || activeSet.has(id);
+    return `<li class="ask-all-item${on ? '' : ' is-off'}"><label class="ask-all-label">
+      <input type="checkbox" class="ask-all-cb" data-provider-id="${escapeAttr(id)}" ${on ? 'checked' : ''} />
+      <span>${escapeHtml(p?.name || id)}</span>
+    </label></li>`;
+  }).join('');
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
@@ -92,6 +282,73 @@ async function init() {
     setStatus('error', 'Cannot reach server');
   }
   renderSessions();
+}
+
+function syncHeaderProviderSelect() {
+  if (!headerProviderSelect) return;
+  const v = providerSelect.value;
+  headerProviderSelect.innerHTML = '';
+  for (const opt of providerSelect.querySelectorAll('option')) {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.textContent;
+    headerProviderSelect.appendChild(o);
+  }
+  if ([...headerProviderSelect.options].some(o => o.value === v)) headerProviderSelect.value = v;
+}
+
+function orderedProviderIds() {
+  const seen = new Set();
+  const ids = [];
+  for (const id of PROVIDER_ORDER) {
+    if (providers[id]) { ids.push(id); seen.add(id); }
+  }
+  for (const id of Object.keys(providers)) {
+    if (!seen.has(id)) { ids.push(id); seen.add(id); }
+  }
+  return ids;
+}
+
+/** Drop saved model allowlists that no longer match server model IDs (prevents empty dropdown). */
+function sanitizeModelAllowlistsForCurrentCatalog() {
+  for (const id of Object.keys(providers)) {
+    const p = providers[id];
+    const key = MODEL_ALLOW_PREFIX + id;
+    let raw;
+    try { raw = localStorage.getItem(key); } catch { continue; }
+    if (!raw || !p?.models?.length) continue;
+    try {
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) { localStorage.removeItem(key); continue; }
+      const next = arr.filter(m => typeof m === 'string' && p.models.includes(m));
+      if (next.length === 0 || next.length >= p.models.length) localStorage.removeItem(key);
+      else if (next.length !== arr.length) localStorage.setItem(key, JSON.stringify(next));
+    } catch {
+      try { localStorage.removeItem(key); } catch {}
+    }
+  }
+}
+
+function renderProviderSkipList() {
+  if (!providerSkipList) return;
+  const skipped = getSkippedProviderIds();
+  const ids = orderedProviderIds();
+  if (ids.length === 0) {
+    providerSkipList.innerHTML = '<li class="empty">No providers loaded</li>';
+    return;
+  }
+  providerSkipList.innerHTML = ids.map(id => {
+    const p = providers[id];
+    const on = !skipped.has(id);
+    const hint = p.local ? 'local' : (p.keyless ? 'keyless' : 'cloud');
+    return `<li class="provider-skip-item${on ? '' : ' is-off'}">
+      <label class="provider-skip-label">
+        <input type="checkbox" class="provider-skip-cb" data-provider-id="${escapeAttr(id)}" ${on ? 'checked' : ''} />
+        <span class="provider-skip-name">${escapeHtml(p.name)}</span>
+        <span class="provider-skip-meta">${p.configured ? '✓' : '—'} · ${hint}</span>
+      </label>
+    </li>`;
+  }).join('');
 }
 
 function buildProviderUI() {
@@ -120,13 +377,21 @@ function buildProviderUI() {
     });
     providerCards.appendChild(card);
   }
+  sanitizeModelAllowlistsForCurrentCatalog();
+  syncHeaderProviderSelect();
+  renderProviderSkipList();
+  renderAskAllProviderList();
 }
 
 function restoreProvider() {
   const saved = localStorage.getItem('cc_provider');
   const firstAvailable = getAvailableProviders()[0]?.id;
-  const target = (saved && providers[saved]) ? saved : (firstAvailable || Object.keys(providers)[0]);
+  const savedOk = saved && providers[saved] && !isProviderSkipped(saved);
+  const ids = orderedProviderIds();
+  const firstNotSkipped = ids.find(id => !isProviderSkipped(id));
+  const target = savedOk ? saved : (firstAvailable || firstNotSkipped || ids[0]);
   if (target) providerSelect.value = target;
+  if (headerProviderSelect && target) headerProviderSelect.value = target;
   providerSelect.dispatchEvent(new Event('change'));
 }
 
@@ -136,14 +401,10 @@ providerSelect.addEventListener('change', () => {
   const p = providers[id];
   if (!p) return;
 
-  modelSelect.innerHTML = '';
-  for (const m of p.models) {
-    const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = m;
-    if (m === p.defaultModel) opt.selected = true;
-    modelSelect.appendChild(opt);
-  }
+  if (headerProviderSelect && headerProviderSelect.value !== id) headerProviderSelect.value = id;
+
+  refreshModelSelectOptions();
+  renderModelAllowList();
 
   if (p.keyless) {
     keySection.style.display = 'none';
@@ -158,6 +419,94 @@ providerSelect.addEventListener('change', () => {
 
   updateStatus();
   localStorage.setItem('cc_provider', id);
+  renderAskAllProviderList();
+});
+
+modelAllowWrap?.addEventListener('change', e => {
+  const cb = e.target.closest('.model-allow-cb');
+  if (!cb) return;
+  const id = providerSelect.value;
+  const p = providers[id];
+  if (!p?.models?.length) return;
+  const boxes = [...modelAllowWrap.querySelectorAll('.model-allow-cb')];
+  const checked = boxes.filter(b => b.checked).map(b => b.dataset.model);
+  if (checked.length === 0) {
+    cb.checked = true;
+    return;
+  }
+  persistModelsAllowed(id, checked.length >= p.models.length ? null : new Set(checked));
+  refreshModelSelectOptions();
+  renderModelAllowList();
+});
+
+askAllProviderList?.addEventListener('change', () => {
+  const elig = getProvidersEligibleForAskAll();
+  const ids = [...askAllProviderList.querySelectorAll('.ask-all-cb:checked')].map(b => b.dataset.providerId).filter(Boolean);
+  if (ids.length === 0) {
+    renderAskAllProviderList();
+    return;
+  }
+  if (ids.length === elig.length) setAskAllProviderIdsOverride(null);
+  else setAskAllProviderIdsOverride(ids);
+});
+
+headerProviderSelect?.addEventListener('change', () => {
+  const id = headerProviderSelect.value;
+  if (providerSelect.value !== id) {
+    providerSelect.value = id;
+    providerSelect.dispatchEvent(new Event('change'));
+  }
+});
+
+providerSkipList?.addEventListener('change', e => {
+  const cb = e.target.closest('.provider-skip-cb');
+  if (!cb) return;
+  const id = cb.dataset.providerId;
+  if (!id) return;
+  toggleProviderSkipped(id, !cb.checked);
+  cb.closest('.provider-skip-item')?.classList.toggle('is-off', !cb.checked);
+  updateStatus();
+  renderAskAllProviderList();
+  if (isProviderSkipped(providerSelect.value)) {
+    restoreProvider();
+  }
+});
+
+resetProviderSkips?.addEventListener('click', () => {
+  setSkippedProviderIds(new Set());
+  renderProviderSkipList();
+  renderAskAllProviderList();
+  updateStatus();
+});
+
+function skipProviderAndSwitchToNext(id) {
+  if (!id || !providers[id]) return;
+  lastFailedProviderId = null;
+  toggleProviderSkipped(id, true);
+  renderProviderSkipList();
+  const toolsOnly = chatMode === 'agent';
+  const avail = getAvailableProviders({ toolsOnly });
+  const next = avail[0]?.id;
+  if (next) {
+    providerSelect.value = next;
+    if (headerProviderSelect) headerProviderSelect.value = next;
+    providerSelect.dispatchEvent(new Event('change'));
+  } else {
+    restoreProvider();
+  }
+  updateStatus();
+}
+
+activePill?.addEventListener('click', () => {
+  const id = activePill.dataset.skipProviderId;
+  if (!id || isProviderSkipped(id)) return;
+  skipProviderAndSwitchToNext(id);
+});
+
+activePill?.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  e.preventDefault();
+  activePill.click();
 });
 
 apiKeyInput.addEventListener('input', () => {
@@ -172,7 +521,7 @@ apiKeyInput.addEventListener('input', () => {
 const MODE_HINTS = {
   'auto':    'Chat mode — streams, tries providers in order, auto-fallback',
   'agent':   'Agent mode — AI uses tools: web, files, images, email, math',
-  'ask-all': 'Sends to all configured providers simultaneously',
+  'ask-all': 'Queries the providers you pick under “Ask All — compare only” (or all if none unchecked)',
 };
 modeToggle.addEventListener('click', e => {
   const btn = e.target.closest('.mode-btn');
@@ -190,10 +539,12 @@ function setChatMode(mode) {
 
 // ── Available providers helper ─────────────────────────────────────────────
 function getAvailableProviders({ toolsOnly = false } = {}) {
+  const skipped = getSkippedProviderIds();
   const preferred = providerSelect.value;
   const ordered = [preferred, ...PROVIDER_ORDER.filter(id => id !== preferred)];
   return ordered
     .filter(id => providers[id])
+    .filter(id => !skipped.has(id))
     .filter(id => !toolsOnly || providers[id].supportsTools)
     .map(id => {
       const p = providers[id];
@@ -213,12 +564,21 @@ function updateStatus() {
     setStatus('offline', needsTools ? 'Agent mode needs a tool-capable provider' : 'No keys configured');
     activePill.textContent = '';
     activePill.className = 'provider-pill';
+    activePill.removeAttribute('data-skip-provider-id');
+    activePill.removeAttribute('title');
+    activePill.removeAttribute('tabindex');
+    activePill.removeAttribute('role');
     return;
   }
   if (chatMode === 'ask-all') {
-    setStatus('online', `${available.length} provider${available.length > 1 ? 's' : ''} ready`);
-    activePill.textContent = `Ask All (${available.length})`;
+    const targets = getAskAllTargets();
+    setStatus('online', `${targets.length} in Ask All${available.length !== targets.length ? ` · ${available.length} available` : ''}`);
+    activePill.textContent = `Ask All (${targets.length})`;
     activePill.className = 'provider-pill online';
+    activePill.removeAttribute('data-skip-provider-id');
+    activePill.removeAttribute('title');
+    activePill.removeAttribute('tabindex');
+    activePill.removeAttribute('role');
   } else {
     const first = available[0];
     const name = providers[first.id].name;
@@ -229,6 +589,20 @@ function updateStatus() {
     setStatus('online', `${prefix}${name}${extra}`);
     activePill.textContent = prefix + name;
     activePill.className = 'provider-pill online';
+    const skipId = lastFailedProviderId && available.some(a => a.id === lastFailedProviderId)
+      ? lastFailedProviderId
+      : null;
+    if (skipId && !isProviderSkipped(skipId)) {
+      activePill.dataset.skipProviderId = skipId;
+      activePill.title = `Tap to turn off “${providers[skipId]?.name || skipId}” for now and use the next provider (same as ☰ Who can answer)`;
+      activePill.setAttribute('role', 'button');
+      activePill.tabIndex = 0;
+    } else {
+      activePill.removeAttribute('data-skip-provider-id');
+      activePill.removeAttribute('title');
+      activePill.removeAttribute('tabindex');
+      activePill.removeAttribute('role');
+    }
   }
 }
 
@@ -251,12 +625,19 @@ async function sendAuto(msgs) {
     if (i > 0) setStatus('warning', `Trying ${name}…`);
 
     const ok = await streamChat(id, key, msgs, name);
-    if (ok) return;
+    if (ok) {
+      lastFailedProviderId = null;
+      updateStatus();
+      return;
+    }
+    lastFailedProviderId = id;
+    updateStatus();
     // streamChat returns false on failure; try next provider
   }
 
   appendMessage('assistant', 'All providers failed. Please check your API keys or connection.', true);
   setStatus('error', 'All providers failed');
+  updateStatus();
 }
 
 async function streamChat(id, key, msgs, name) {
@@ -276,7 +657,7 @@ async function streamChat(id, key, msgs, name) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         provider: id,
-        model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
+        model: getEffectiveModelForProvider(id),
         apiKey: key || undefined,
         messages: [
           { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
@@ -289,6 +670,7 @@ async function streamChat(id, key, msgs, name) {
     if (!res.ok || !res.body) {
       let errMsg = `HTTP ${res.status}`;
       try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
+      lastFailedProviderId = id;
       bubble.remove();
       return false;
     }
@@ -328,6 +710,7 @@ async function streamChat(id, key, msgs, name) {
             bodyEl.classList.remove('streaming');
             wireMessageActions(bubble, buffer);
             messages.push({ role: 'assistant', content: buffer });
+            lastFailedProviderId = null;
             setStatus('online', `${name} responded`);
             activePill.textContent = name;
             activePill.className = 'provider-pill online';
@@ -347,6 +730,7 @@ async function streamChat(id, key, msgs, name) {
       bodyEl.classList.remove('streaming');
       wireMessageActions(bubble, buffer);
       messages.push({ role: 'assistant', content: buffer });
+      lastFailedProviderId = null;
       saveCurrentSession();
       return true;
     }
@@ -359,10 +743,12 @@ async function streamChat(id, key, msgs, name) {
       bodyEl.classList.remove('streaming');
       wireMessageActions(bubble, buffer);
       if (buffer) messages.push({ role: 'assistant', content: buffer });
+      lastFailedProviderId = null;
       setStatus('online', 'Stopped');
       return true;
     }
     console.error(err);
+    lastFailedProviderId = id;
     bubble.remove();
     return false;
   } finally {
@@ -378,54 +764,70 @@ async function sendAgent(msgs) {
     appendMessage('assistant', 'Agent mode needs a tool-capable provider (Pollinations, Groq, or Together).', true);
     return;
   }
-  const { id, key } = available[0];
-  const name = providers[id].name;
-  const typingId = appendTyping(`${name} (Agent)`);
-  currentController = new AbortController();
-  setLoading(true, true);
 
-  try {
-    const res = await fetch(`${API}/api/agent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        provider: id,
-        model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
-        apiKey: key || undefined,
-        messages: [
-          { role: 'system', content: systemPrompt.value || 'You are a helpful assistant with tools.' },
-          ...msgs,
-        ],
-        maxSteps: 6,
-      }),
-      signal: currentController.signal,
-    });
-    const data = await res.json();
-    removeTyping(typingId);
-    if (!res.ok || data.error) {
-      appendMessage('assistant', `Agent error: ${data.error || res.statusText}`, true, id);
-      setStatus('error', 'Agent failed');
+  for (let i = 0; i < available.length; i++) {
+    const { id, key } = available[i];
+    const name = providers[id].name;
+    if (i > 0) setStatus('warning', `Trying ${name} (Agent)…`);
+
+    const typingId = appendTyping(`${name} (Agent)`);
+    currentController = new AbortController();
+    setLoading(true, true);
+
+    try {
+      const res = await fetch(`${API}/api/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: id,
+          model: getEffectiveModelForProvider(id),
+          apiKey: key || undefined,
+          messages: [
+            { role: 'system', content: systemPrompt.value || 'You are a helpful assistant with tools.' },
+            ...msgs,
+          ],
+          maxSteps: 6,
+        }),
+        signal: currentController.signal,
+      });
+      const data = await res.json();
+      removeTyping(typingId);
+      if (!res.ok || data.error) {
+        lastFailedProviderId = id;
+        appendMessage('assistant', `Agent error (${name}): ${data.error || res.statusText}`, true, id, false, { skipProviderId: id });
+        setStatus('warning', `${name} failed — trying next…`);
+        updateStatus();
+        continue;
+      }
+      lastFailedProviderId = null;
+      appendAgentMessage(id, data);
+      messages.push({ role: 'assistant', content: data.reply || '' });
+      setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
+      activePill.textContent = `🤖 ${name}`;
+      activePill.className = 'provider-pill online';
+      saveCurrentSession();
+      loadFiles();
       return;
+    } catch (err) {
+      removeTyping(typingId);
+      if (err.name === 'AbortError') {
+        lastFailedProviderId = null;
+        setStatus('online', 'Stopped');
+        return;
+      }
+      lastFailedProviderId = id;
+      appendMessage('assistant', `Agent error (${name}): ${err.message}`, true, id, false, { skipProviderId: id });
+      setStatus('warning', `${name} failed — trying next…`);
+      updateStatus();
+    } finally {
+      currentController = null;
+      setLoading(false);
     }
-    appendAgentMessage(id, data);
-    messages.push({ role: 'assistant', content: data.reply || '' });
-    setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
-    activePill.textContent = `🤖 ${name}`;
-    activePill.className = 'provider-pill online';
-    saveCurrentSession();
-    loadFiles();
-  } catch (err) {
-    removeTyping(typingId);
-    if (err.name !== 'AbortError') {
-      appendMessage('assistant', `Agent error: ${err.message}`, true);
-      setStatus('error', 'Agent failed');
-    } else {
-      setStatus('online', 'Stopped');
-    }
-  } finally {
-    currentController = null;
-    setLoading(false);
   }
+
+  appendMessage('assistant', 'All tool-capable providers failed. Tap the green provider pill to turn off the last one that failed, use ☰ Who can answer, or pick another host in the header.', true);
+  setStatus('error', 'All agent providers failed');
+  updateStatus();
 }
 
 // ── Ask All mode: fan out, show each response with badge ──────────────────
@@ -436,17 +838,23 @@ async function sendAskAll(msgs) {
     return;
   }
 
-  const slots = available.map(({ id }) => ({ id, typingId: appendTyping(providers[id].name) }));
+  const targets = getAskAllTargets();
+  if (targets.length === 0) {
+    appendMessage('assistant', 'Ask All has no providers selected. Open ☰ and check at least one backend under “Ask All — compare only”.', true);
+    return;
+  }
+
+  const slots = targets.map(({ id }) => ({ id, typingId: appendTyping(providers[id].name) }));
   setLoading(true);
 
-  await Promise.allSettled(available.map(async ({ id, key }, i) => {
+  await Promise.allSettled(targets.map(async ({ id, key }, i) => {
     try {
       const res = await fetch(`${API}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: id,
-          model: providers[id].defaultModel,
+          model: getEffectiveModelForProvider(id),
           apiKey: key || undefined,
           messages: [
             { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
@@ -468,7 +876,7 @@ async function sendAskAll(msgs) {
   }));
 
   setLoading(false);
-  setStatus('online', `${available.length} providers answered`);
+  setStatus('online', `${targets.length} providers answered`);
 }
 
 // ── Submit handler ─────────────────────────────────────────────────────────
@@ -704,11 +1112,15 @@ async function ghCall(path, opts = {}) {
 function snapshot() {
   let mem = [];
   try { mem = JSON.parse(localStorage.getItem('cc_memory') || '[]'); } catch {}
+  const askAll = getAskAllProviderIdsOverride();
   return {
-    version: 1,
+    version: 3,
     exportedAt: new Date().toISOString(),
     sessions,
     memory: mem,
+    providerSkipIds: [...getSkippedProviderIds()],
+    askAllProviderIds: askAll ? [...askAll] : null,
+    modelsAllowedByProvider: collectModelAllowModelIds(),
     settings: {
       provider: localStorage.getItem('cc_provider') || '',
       mode: localStorage.getItem('cc_mode') || 'auto',
@@ -761,6 +1173,23 @@ async function pullSnapshot() {
         }).catch(() => {});
       }
       loadMemory();
+    }
+    if (Array.isArray(snap.providerSkipIds)) {
+      setSkippedProviderIds(new Set(snap.providerSkipIds.filter(x => typeof x === 'string')));
+      renderProviderSkipList();
+      if (isProviderSkipped(providerSelect.value)) restoreProvider();
+    }
+    if (snap.askAllProviderIds === null || (Array.isArray(snap.askAllProviderIds) && snap.askAllProviderIds.length === 0)) {
+      setAskAllProviderIdsOverride(null);
+    } else if (Array.isArray(snap.askAllProviderIds)) {
+      setAskAllProviderIdsOverride(snap.askAllProviderIds.filter(x => typeof x === 'string'));
+    }
+    if (snap.modelsAllowedByProvider && typeof snap.modelsAllowedByProvider === 'object') {
+      for (const [pid, arr] of Object.entries(snap.modelsAllowedByProvider)) {
+        if (Array.isArray(arr) && arr.length) try { localStorage.setItem(MODEL_ALLOW_PREFIX + pid, JSON.stringify(arr)); } catch {}
+      }
+      renderModelAllowList();
+      refreshModelSelectOptions();
     }
     setSyncStatus('pulled', 'on');
   } catch (e) {
@@ -877,7 +1306,7 @@ function appendAssistantShell(providerId = null) {
   return div;
 }
 
-function appendMessage(role, content, isError = false, providerId = null, isAskAll = false) {
+function appendMessage(role, content, isError = false, providerId = null, isAskAll = false, opts = {}) {
   removeWelcome();
   const div = document.createElement('div');
   div.className = `message ${role}${isAskAll ? ' ask-all-group' : ''}`;
@@ -885,6 +1314,9 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
   const name = role === 'user'
     ? 'You'
     : (providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name) || 'AI';
+  const skipBtn = isError && opts.skipProviderId && providers[opts.skipProviderId]
+    ? `<button type="button" class="msg-action-btn skip-provider-btn" data-skip-provider="${escapeAttr(opts.skipProviderId)}">Turn off for now</button>`
+    : '';
   div.innerHTML = `
     <div class="msg-meta">
       <span class="msg-avatar">${avatar}</span>
@@ -895,9 +1327,14 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
     <div class="msg-actions">
       <button class="msg-action-btn copy-btn">Copy</button>
       ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
+      ${skipBtn}
     </div>`;
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
   wireMessageActions(div, content);
+  div.querySelector('.skip-provider-btn')?.addEventListener('click', () => {
+    const sid = div.querySelector('.skip-provider-btn')?.dataset.skipProvider;
+    if (sid) skipProviderAndSwitchToNext(sid);
+  });
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
@@ -1267,9 +1704,9 @@ sessionsList?.addEventListener('click', e => {
 function exportChat() {
   if (messages.length === 0) return;
   const title = sessionTitle(messages);
-  const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
+  const md = `# ${title}\n\n*Exported from OpenClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
-      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
+      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**OpenClaw**' : `**${m.role}**`;
       return `### ${who}\n\n${m.content}\n`;
     }).join('\n');
   const blob = new Blob([md], { type: 'text/markdown' });
@@ -1286,7 +1723,15 @@ function exportChat() {
 // ── Persist settings ───────────────────────────────────────────────────────
 function loadSettings() {
   const sys = localStorage.getItem('cc_system');
-  if (sys) systemPrompt.value = sys;
+  if (sys) {
+    if (/cloudclaw/i.test(sys)) {
+      const migrated = sys.replace(/cloudclaw/gi, 'OpenClaw');
+      systemPrompt.value = migrated;
+      try { localStorage.setItem('cc_system', migrated); } catch {}
+    } else {
+      systemPrompt.value = sys;
+    }
+  }
   const temp = localStorage.getItem('cc_temp');
   if (temp) { tempRange.value = temp; tempVal.textContent = temp; }
   const mode = localStorage.getItem('cc_mode');
@@ -1312,6 +1757,6 @@ setInterval(async () => {
       if (providers[id]?.configured !== p.configured) changed = true;
     }
     providers = next;
-    if (changed) { buildProviderUI(); updateStatus(); }
+    if (changed) { buildProviderUI(); renderProviderSkipList(); updateStatus(); }
   } catch { /* ignore */ }
 }, 30_000);
