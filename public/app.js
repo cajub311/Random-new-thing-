@@ -9,8 +9,10 @@ let isLoading   = false;
 let chatMode    = 'auto';        // 'auto' | 'agent' | 'ask-all'
 let pendingFileText = null;
 let currentController = null;    // AbortController for in-flight requests
-let sessions    = [];            // [{id, title, mode, messages, updated}]
+/** @typedef {{ id: string, messages: {role:string,content:string}[], mode: string, updated: number, title?: string, titleLocked?: boolean, titleUser?: string, preview?: string }} Session */
+let sessions    = [];            // Session[]
 let currentSessionId = null;
+let historySearchQuery = '';
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
 const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
@@ -46,8 +48,14 @@ const activePill     = document.getElementById('activePill');
 const filesList      = document.getElementById('filesList');
 const refreshFilesBtn= document.getElementById('refreshFilesBtn');
 const keySection     = document.getElementById('keySection');
-const sessionsList   = document.getElementById('sessionsList');
 const exportChatBtn  = document.getElementById('exportChatBtn');
+const exportAllJsonBtn = document.getElementById('exportAllJsonBtn');
+const exportAllMdBtn = document.getElementById('exportAllMdBtn');
+const historyRail      = document.getElementById('historyRail');
+const historyRailToggle = document.getElementById('historyRailToggle');
+const historySearchInput = document.getElementById('historySearchInput');
+const historyList      = document.getElementById('historyList');
+const headerNewChatBtn = document.getElementById('headerNewChatBtn');
 const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
@@ -78,10 +86,182 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+// ── Session persistence: localStorage + IndexedDB fallback for large data ──
+const LS_SESSIONS = 'cc_sessions';
+const LS_SESSIONS_LARGE = 'cc_sessions_large';
+const IDB_NAME = 'openclaw_cc';
+const IDB_STORE = 'kv';
+const IDB_SESSIONS_KEY = 'sessions_blob';
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('no idb'));
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbGet(key) {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const r = tx.objectStore(IDB_STORE).get(key);
+    r.onsuccess = () => { db.close(); resolve(r.result ?? null); };
+    r.onerror = () => { db.close(); reject(r.error); };
+  }));
+}
+
+function idbSet(key, value) {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, key);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  }));
+}
+
+function idbDelete(key) {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(key);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  }));
+}
+
+function stripForPreview(text) {
+  return String(text ?? '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/[#>*_\-[\]()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sessionPreviewFromMessages(msgs) {
+  if (!msgs?.length) return '';
+  const last = msgs[msgs.length - 1];
+  const t = stripForPreview(last?.content || '');
+  return t.length > 140 ? t.slice(0, 140) + '…' : t;
+}
+
+function autoTitleFromMessages(msgs) {
+  const first = msgs?.find(m => m.role === 'user');
+  if (!first) return 'New chat';
+  const t = stripForPreview(first.content);
+  return t.length > 48 ? t.slice(0, 48) + '…' : (t || 'New chat');
+}
+
+function displayTitle(s) {
+  if (s.titleLocked && (s.titleUser || '').trim()) return (s.titleUser || '').trim();
+  if (s.titleLocked && (s.title || '').trim()) return (s.title || '').trim();
+  return (s.title || '').trim() || autoTitleFromMessages(s.messages);
+}
+
+function normalizeSession(s) {
+  const messages = Array.isArray(s.messages) ? s.messages : [];
+  return {
+    id: s.id,
+    messages,
+    mode: s.mode || 'auto',
+    updated: typeof s.updated === 'number' ? s.updated : Date.now(),
+    titleLocked: !!s.titleLocked,
+    titleUser: typeof s.titleUser === 'string' ? s.titleUser : '',
+    title: s.titleLocked
+      ? ((s.titleUser || s.title || '').trim() || 'New chat')
+      : (autoTitleFromMessages(messages) || (s.title || 'New chat')),
+    preview: s.preview || sessionPreviewFromMessages(messages),
+  };
+}
+
+async function persistSessionsToDisk() {
+  const envelope = { v: 2, sessions, savedAt: Date.now() };
+  const raw = JSON.stringify(envelope);
+  const tryLocalStorage = () => {
+    localStorage.setItem(LS_SESSIONS, raw);
+    localStorage.removeItem(LS_SESSIONS_LARGE);
+  };
+  try {
+    tryLocalStorage();
+    if (localStorage.getItem(LS_SESSIONS_LARGE) === '1') await idbDelete(IDB_SESSIONS_KEY);
+  } catch (e) {
+    if (e?.name === 'QuotaExceededError' && window.indexedDB) {
+      try {
+        await idbSet(IDB_SESSIONS_KEY, raw);
+        localStorage.setItem(LS_SESSIONS_LARGE, '1');
+        const light = JSON.stringify({
+          v: 2,
+          skeleton: true,
+          sessions: sessions.map(s => ({
+            id: s.id,
+            mode: s.mode,
+            updated: s.updated,
+            title: s.title,
+            titleLocked: s.titleLocked,
+            titleUser: s.titleUser,
+            preview: s.preview,
+            messages: [],
+          })),
+          savedAt: Date.now(),
+        });
+        localStorage.setItem(LS_SESSIONS, light);
+      } catch (e2) {
+        console.warn('Session persist failed', e2);
+      }
+    } else {
+      console.warn('Session persist failed', e);
+    }
+  }
+  if (currentSessionId) localStorage.setItem('cc_current_session', currentSessionId);
+  else localStorage.removeItem('cc_current_session');
+}
+
+async function readSessionsStorage() {
+  let raw = null;
+  if (localStorage.getItem(LS_SESSIONS_LARGE) === '1' && window.indexedDB) {
+    try { raw = await idbGet(IDB_SESSIONS_KEY); } catch { /* ignore */ }
+  }
+  if (!raw) {
+    try { raw = localStorage.getItem(LS_SESSIONS); } catch { raw = null; }
+  }
+  if (!raw) { sessions = []; return; }
+  let data;
+  try { data = JSON.parse(raw); } catch { sessions = []; return; }
+  let list = [];
+  if (Array.isArray(data)) list = data;
+  else if (data?.skeleton && localStorage.getItem(LS_SESSIONS_LARGE) === '1' && window.indexedDB) {
+    try {
+      const full = await idbGet(IDB_SESSIONS_KEY);
+      if (full) {
+        const inner = JSON.parse(full);
+        list = inner.sessions || [];
+      }
+    } catch { list = []; }
+  } else if (Array.isArray(data.sessions)) list = data.sessions;
+  sessions = list.map(normalizeSession);
+}
+
+/** Static welcome trust highlights (mirrors index.html welcome block). */
+function trustBarHtml() {
+  return `<section class="trust-bar" aria-label="Trust and privacy highlights">
+  <div class="trust-bar-inner">
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">🔓</span><span class="trust-label">100% Open Source</span></div>
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">🏠</span><span class="trust-label">Private by default (local-first)</span></div>
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">☁️</span><span class="trust-label">Free cloud fallback</span></div>
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">🤖</span><span class="trust-label">Agent mode + tools + memory</span></div>
+    <div class="trust-card"><span class="trust-icon" aria-hidden="true">🛡️</span><span class="trust-label">No data stored</span></div>
+  </div>
+</section>`;
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
-  loadSessions();
+  await loadSessions();
   try {
     const res = await fetch(`${API}/api/providers`);
     providers = await res.json();
@@ -91,7 +271,7 @@ async function init() {
   } catch (e) {
     setStatus('error', 'Cannot reach server');
   }
-  renderSessions();
+  renderHistoryList();
 }
 
 function buildProviderUI() {
@@ -686,6 +866,7 @@ function showWelcome() {
       <div class="welcome-icon">🐾</div>
       <h1>OpenClaw</h1>
       <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
+      ${trustBarHtml()}
       <div class="provider-cards" id="providerCardsWelcome"></div>
       <div class="quick-prompts">
         <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
@@ -980,15 +1161,18 @@ function timestamp() {
 }
 
 // ── Sessions ───────────────────────────────────────────────────────────────
-function loadSessions() {
-  try { sessions = JSON.parse(localStorage.getItem('cc_sessions') || '[]'); } catch { sessions = []; }
+async function loadSessions() {
+  await readSessionsStorage();
   currentSessionId = localStorage.getItem('cc_current_session') || null;
   if (currentSessionId) {
-    const s = sessions.find(s => s.id === currentSessionId);
+    const s = sessions.find(x => x.id === currentSessionId);
     if (s) {
-      messages = s.messages || [];
+      messages = [...(s.messages || [])];
       chatMode = s.mode || 'auto';
       if (messages.length) replayMessages();
+    } else {
+      currentSessionId = null;
+      localStorage.removeItem('cc_current_session');
     }
   }
 }
@@ -1007,77 +1191,260 @@ function newSession() {
   currentSessionId = null;
   localStorage.removeItem('cc_current_session');
   showWelcome();
-  renderSessions();
+  renderHistoryList();
 }
 
 function saveCurrentSession() {
-  if (messages.length === 0) return;
+  const now = Date.now();
+  if (messages.length === 0) {
+    if (!currentSessionId) return;
+    const s = sessions.find(x => x.id === currentSessionId);
+    if (s) {
+      s.messages = [];
+      s.updated = now;
+      s.preview = '';
+      if (!s.titleLocked) s.title = 'New chat';
+      sessions.sort((a, b) => b.updated - a.updated);
+      void persistSessionsToDisk();
+      renderHistoryList();
+    }
+    return;
+  }
+  const preview = sessionPreviewFromMessages(messages);
   if (!currentSessionId) {
-    currentSessionId = 's_' + Date.now();
-    localStorage.setItem('cc_current_session', currentSessionId);
-    sessions.unshift({ id: currentSessionId, messages: [...messages], mode: chatMode, updated: Date.now(), title: sessionTitle(messages) });
+    currentSessionId = 's_' + now;
+    sessions.unshift(normalizeSession({
+      id: currentSessionId,
+      messages: [...messages],
+      mode: chatMode,
+      updated: now,
+      titleLocked: false,
+      titleUser: '',
+      title: autoTitleFromMessages(messages),
+      preview,
+    }));
   } else {
-    const s = sessions.find(s => s.id === currentSessionId);
+    const s = sessions.find(x => x.id === currentSessionId);
     if (s) {
       s.messages = [...messages];
       s.mode = chatMode;
-      s.updated = Date.now();
-      s.title = sessionTitle(messages);
+      s.updated = now;
+      s.preview = preview;
+      if (!s.titleLocked) s.title = autoTitleFromMessages(messages);
     } else {
-      sessions.unshift({ id: currentSessionId, messages: [...messages], mode: chatMode, updated: Date.now(), title: sessionTitle(messages) });
+      sessions.unshift(normalizeSession({
+        id: currentSessionId,
+        messages: [...messages],
+        mode: chatMode,
+        updated: now,
+        titleLocked: false,
+        titleUser: '',
+        title: autoTitleFromMessages(messages),
+        preview,
+      }));
     }
   }
-  sessions = sessions.slice(0, 30);
-  try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
-  renderSessions();
+  sessions.sort((a, b) => b.updated - a.updated);
+  sessions = sessions.slice(0, 200);
+  void persistSessionsToDisk();
+  renderHistoryList();
 }
 
 function sessionTitle(msgs) {
-  const first = msgs.find(m => m.role === 'user');
-  if (!first) return 'New chat';
-  const t = first.content.replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim();
-  return t.length > 48 ? t.slice(0, 48) + '…' : t;
+  return autoTitleFromMessages(msgs);
 }
 
-function renderSessions() {
-  if (!sessionsList) return;
-  if (sessions.length === 0) {
-    sessionsList.innerHTML = '<li class="empty">No past chats</li>';
-    return;
-  }
-  sessionsList.innerHTML = sessions.slice(0, 12).map(s => `
-    <li class="${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
-      <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
-      <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
-    </li>`).join('');
+function formatSessionWhen(ts) {
+  const d = new Date(ts);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
 }
 
-sessionsList?.addEventListener('click', e => {
-  const del = e.target.closest('.session-del');
-  if (del) {
-    const id = del.dataset.del;
-    sessions = sessions.filter(s => s.id !== id);
-    try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
-    if (id === currentSessionId) { currentSessionId = null; messages = []; showWelcome(); }
-    renderSessions();
+function filteredSessionsForHistory() {
+  const q = historySearchQuery.trim().toLowerCase();
+  if (!q) return sessions;
+  return sessions.filter(s => {
+    const hay = [
+      displayTitle(s),
+      s.preview || '',
+      ...(s.messages || []).map(m => stripForPreview(m.content)),
+    ].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+function renderHistoryList() {
+  if (!historyList) return;
+  const list = filteredSessionsForHistory().sort((a, b) => b.updated - a.updated);
+  if (list.length === 0) {
+    historyList.innerHTML = `<li class="empty">${historySearchQuery.trim() ? 'No matches' : 'No conversations yet'}</li>`;
     return;
   }
-  const li = e.target.closest('li[data-id]');
-  if (!li) return;
-  const s = sessions.find(x => x.id === li.dataset.id);
+  historyList.innerHTML = list.map(s => {
+    const title = displayTitle(s);
+    const prev = (s.preview || '').trim() || 'No messages yet';
+    const when = formatSessionWhen(s.updated);
+    return `<li class="history-item${s.id === currentSessionId ? ' active' : ''}" data-id="${escapeAttr(s.id)}" role="button" tabindex="0">
+      <div class="history-item-actions">
+        <button type="button" class="history-item-del" data-del="${escapeAttr(s.id)}" title="Delete thread" aria-label="Delete">×</button>
+      </div>
+      <div class="history-item-title" data-title="${escapeAttr(s.id)}" title="Double-click to rename">${escapeHtml(title)}</div>
+      <div class="history-item-meta"><span>${escapeHtml(when)}</span></div>
+      <div class="history-item-preview">${escapeHtml(prev)}</div>
+    </li>`;
+  }).join('');
+}
+
+function switchToSession(id) {
+  const s = sessions.find(x => x.id === id);
   if (!s) return;
   currentSessionId = s.id;
   messages = [...(s.messages || [])];
   chatMode = s.mode || 'auto';
   setChatMode(chatMode);
   localStorage.setItem('cc_current_session', currentSessionId);
-  replayMessages();
-  renderSessions();
+  if (messages.length) replayMessages();
+  else showWelcome();
+  renderHistoryList();
+}
+
+historyList?.addEventListener('click', e => {
+  const del = e.target.closest('.history-item-del');
+  if (del) {
+    e.stopPropagation();
+    const id = del.dataset.del;
+    sessions = sessions.filter(s => s.id !== id);
+    void persistSessionsToDisk();
+    if (id === currentSessionId) {
+      currentSessionId = null;
+      messages = [];
+      localStorage.removeItem('cc_current_session');
+      showWelcome();
+    }
+    renderHistoryList();
+    return;
+  }
+  const li = e.target.closest('.history-item[data-id]');
+  if (!li) return;
+  switchToSession(li.dataset.id);
 });
+
+historyList?.addEventListener('keydown', e => {
+  const li = e.target.closest('.history-item[data-id]');
+  if (!li) return;
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    switchToSession(li.dataset.id);
+  }
+});
+
+historyList?.addEventListener('dblclick', e => {
+  const titleWrap = e.target.closest('.history-item-title');
+  if (!titleWrap) return;
+  const li = titleWrap.closest('.history-item[data-id]');
+  if (!li) return;
+  const id = li.dataset.id;
+  const s = sessions.find(x => x.id === id);
+  if (!s) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'history-item-title-input';
+  input.value = s.titleLocked ? (s.titleUser || displayTitle(s)) : displayTitle(s);
+  titleWrap.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const finish = commit => {
+    if (commit) {
+      const v = input.value.trim();
+      if (v) {
+        s.titleLocked = true;
+        s.titleUser = v;
+        s.title = v;
+      } else {
+        s.titleLocked = false;
+        s.titleUser = '';
+        s.title = autoTitleFromMessages(s.messages);
+      }
+    }
+    void persistSessionsToDisk();
+    renderHistoryList();
+  };
+
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+    if (ev.key === 'Escape') { ev.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+});
+
+historySearchInput?.addEventListener('input', () => {
+  historySearchQuery = historySearchInput.value;
+  renderHistoryList();
+});
+
+function applyHistoryRailCollapsed(collapsed) {
+  if (!historyRail || !historyRailToggle) return;
+  historyRail.classList.toggle('collapsed', collapsed);
+  historyRailToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  historyRailToggle.title = collapsed ? 'Expand history' : 'Collapse history';
+}
+
+(() => {
+  try {
+    if (localStorage.getItem('cc_history_rail_collapsed') === '1') applyHistoryRailCollapsed(true);
+  } catch { /* ignore */ }
+})();
+
+historyRailToggle?.addEventListener('click', () => {
+  const collapsed = !historyRail.classList.contains('collapsed');
+  applyHistoryRailCollapsed(collapsed);
+  try { localStorage.setItem('cc_history_rail_collapsed', collapsed ? '1' : '0'); } catch { /* ignore */ }
+});
+
+headerNewChatBtn?.addEventListener('click', () => newSession());
+
+exportAllJsonBtn?.addEventListener('click', () => exportAllChats('json'));
+exportAllMdBtn?.addEventListener('click', () => exportAllChats('md'));
+
+function exportAllChats(kind) {
+  if (!sessions.length) return;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  if (kind === 'json') {
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), sessions }, null, 2)], { type: 'application/json' });
+    downloadBlob(blob, `openclaw-chats-${stamp}.json`);
+    return;
+  }
+  let md = `# OpenClaw — all chats\n\n*Exported ${new Date().toLocaleString()}*\n\n---\n\n`;
+  for (const s of [...sessions].sort((a, b) => b.updated - a.updated)) {
+    const t = displayTitle(s);
+    md += `## ${t}\n\n_${formatSessionWhen(s.updated)} · ${s.messages?.length || 0} messages_\n\n`;
+    for (const m of s.messages || []) {
+      const who = m.role === 'user' ? 'You' : m.role === 'assistant' ? 'Assistant' : m.role;
+      md += `**${who}**\n\n${m.content}\n\n`;
+    }
+    md += '---\n\n';
+  }
+  downloadBlob(new Blob([md], { type: 'text/markdown' }), `openclaw-chats-${stamp}.md`);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 function exportChat() {
   if (messages.length === 0) return;
-  const title = sessionTitle(messages);
+  const s = currentSessionId ? sessions.find(x => x.id === currentSessionId) : null;
+  const title = s ? displayTitle(s) : sessionTitle(messages);
   const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
       const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
