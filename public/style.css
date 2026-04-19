@@ -96,6 +96,27 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 }
 .topbar-title { flex: 1; font-weight: 600; font-size: 0.95rem; color: var(--text); }
 
+.github-source-link {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: color var(--transition), border-color var(--transition), background var(--transition);
+}
+.github-source-link:hover {
+  color: var(--accent2);
+  border-color: var(--border);
+  background: var(--surface2);
+}
+.github-source-link:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+}
+
 /* ── Buttons ─────────────────────────────────────────────────────────── */
 .icon-btn {
   background: transparent; border: 1px solid var(--border); color: var(--text);
