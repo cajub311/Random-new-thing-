@@ -646,3 +646,10 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   margin-top: 8px;
   margin-bottom: 0;
 }
+
+.key-persist-hint {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 8px 0 4px;
+}

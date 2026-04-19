@@ -201,6 +201,12 @@ npx vercel
 Works out of the box. `vercel.json` ships with a 60s function duration and
 512MB memory so agent tool chains finish comfortably.
 
+**API keys in the sidebar** are stored in the browser (`localStorage`) for
+that **exact site URL**. If you have two Vercel projects pointing at the same
+repo (e.g. `*.vercel.app` and `*-s2wr.vercel.app`), keys saved on one URL do
+not appear on the other — pick **one** production URL or use **GitHub Gist
+sync** in the sidebar to move settings between devices.
+
 ### Render / Railway / Fly.io / a Raspberry Pi
 
 It's a plain Node/Express server. Any Node 18+ host works.

@@ -76,9 +76,10 @@
     <div class="sidebar-section" id="keySection">
       <label>API Key <span class="badge free">FREE</span></label>
       <div class="key-row">
-        <input type="password" id="apiKeyInput" placeholder="Paste your key…" autocomplete="off" />
+        <input type="password" id="apiKeyInput" name="openclaw-api-key" placeholder="Paste your key…" autocomplete="new-password" autocapitalize="off" spellcheck="false" />
         <button class="icon-btn" id="toggleKeyBtn" title="Show/hide">👁</button>
       </div>
+      <p class="key-persist-hint" id="keyPersistHint">Saved in this browser for this site URL. Use one Vercel domain so keys are not split across deployments.</p>
       <a id="getKeyLink" href="#" target="_blank" class="get-key-link">Get free key →</a>
     </div>
 

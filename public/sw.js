@@ -2,7 +2,7 @@
 // Strategy: cache-first for static shell assets, network-first (no cache)
 // for /api/* so AI calls always hit the live backend.
 
-const CACHE = 'openclaw-shell-v1';
+const CACHE = 'openclaw-shell-v2';
 const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {

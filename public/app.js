@@ -58,6 +58,7 @@ const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
 const showLocalProviders = document.getElementById('showLocalProviders');
+const keyPersistHint = document.getElementById('keyPersistHint');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -216,8 +217,10 @@ providerSelect.addEventListener('change', () => {
   if (p.keyless) {
     keySection.style.display = 'none';
     apiKeyInput.value = '';
+    if (keyPersistHint) keyPersistHint.style.display = 'none';
   } else {
     keySection.style.display = '';
+    if (keyPersistHint) keyPersistHint.style.display = '';
     const savedKey = localStorage.getItem(`cc_key_${id}`) || '';
     apiKeyInput.value = savedKey;
     getKeyLink.href = p.signupUrl;
@@ -228,12 +231,43 @@ providerSelect.addEventListener('change', () => {
   localStorage.setItem('cc_provider', id);
 });
 
-apiKeyInput.addEventListener('input', () => {
+function persistCurrentApiKey() {
   const id = providerSelect.value;
+  const p = providers[id];
+  if (!p || p.keyless) return;
   const trimmed = apiKeyInput.value.trim();
-  if (trimmed) localStorage.setItem(`cc_key_${id}`, trimmed);
-  else         localStorage.removeItem(`cc_key_${id}`);
+  try {
+    if (trimmed) localStorage.setItem(`cc_key_${id}`, trimmed);
+    else localStorage.removeItem(`cc_key_${id}`);
+    if (keyPersistHint) {
+      keyPersistHint.textContent = trimmed
+        ? 'Saved · stored in this browser for this exact site URL.'
+        : 'Paste a key to save it here. Each Vercel URL has its own storage — use one production domain so keys are not split.';
+      keyPersistHint.style.color = '';
+    }
+  } catch (e) {
+    if (keyPersistHint) {
+      keyPersistHint.textContent = 'Could not save (private mode or storage full). Try another browser or tab.';
+      keyPersistHint.style.color = 'var(--warning)';
+    }
+  }
+}
+
+apiKeyInput.addEventListener('input', () => {
+  persistCurrentApiKey();
   updateStatus();
+});
+apiKeyInput.addEventListener('change', persistCurrentApiKey);
+apiKeyInput.addEventListener('paste', () => {
+  queueMicrotask(() => {
+    persistCurrentApiKey();
+    updateStatus();
+  });
+});
+apiKeyInput.addEventListener('blur', persistCurrentApiKey);
+window.addEventListener('pagehide', persistCurrentApiKey);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') persistCurrentApiKey();
 });
 
 // ── Mode toggle ────────────────────────────────────────────────────────────
