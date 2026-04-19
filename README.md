@@ -34,6 +34,17 @@ generate images, do math, and remember things about you.
 
 ---
 
+## Full OpenClaw
+
+The **web UI** in this repository is a chat demo you can run locally or
+[deploy for free](#deploy-for-free). **Full OpenClaw** is the same agent
+experience across more surfaces: Discord, Slack, WhatsApp, voice, desktop
+apps, and a live canvas workspace. What ships in-repo today is the web
+client, HTTP API, and an optional [Telegram bot](#telegram-bot); other
+channels are tracked under [Roadmap ideas](#roadmap-ideas).
+
+---
+
 ## 🚀 Quick start
 
 ```bash

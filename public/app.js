@@ -52,6 +52,12 @@ const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
+const mainTabs       = document.getElementById('mainTabs');
+const mainTabChat    = document.getElementById('mainTabChat');
+const mainTabExplore = document.getElementById('mainTabExplore');
+const chatPanel      = document.getElementById('chatPanel');
+const explorePanel   = document.getElementById('explorePanel');
+const exploreBackToChat = document.getElementById('exploreBackToChat');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -135,9 +141,52 @@ async function readEventStream(reader, decoder, onEvent) {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
+function readmeBaseUrl() {
+  const m = document.querySelector('meta[name="openclaw-readme"]');
+  const raw = (m?.getAttribute('content') || '').trim();
+  if (!raw) return 'https://github.com/cajub311/Random-new-thing-/blob/main/README.md';
+  return raw.split('#')[0].replace(/\/+$/, '');
+}
+
+function applyReadmeLinks() {
+  const base = readmeBaseUrl();
+  const pairs = [
+    ['readmeFullOpenClaw', '#full-openclaw'],
+    ['readmeRoadmap', '#roadmap-ideas'],
+    ['readmeTelegram', '#telegram-bot'],
+    ['readmeArchitecture', '#architecture'],
+    ['readmeDeploy', '#deploy-for-free'],
+  ];
+  for (const [id, hash] of pairs) {
+    const el = document.getElementById(id);
+    if (el) el.href = base + hash;
+  }
+}
+
+function setMainTab(tab, { persist = true } = {}) {
+  const explore = tab === 'explore';
+  if (mainTabChat) {
+    mainTabChat.classList.toggle('active', !explore);
+    mainTabChat.setAttribute('aria-selected', explore ? 'false' : 'true');
+  }
+  if (mainTabExplore) {
+    mainTabExplore.classList.toggle('active', explore);
+    mainTabExplore.setAttribute('aria-selected', explore ? 'true' : 'false');
+  }
+  if (chatPanel) chatPanel.hidden = explore;
+  if (explorePanel) explorePanel.hidden = !explore;
+  if (persist) {
+    try { localStorage.setItem('cc_main_tab', explore ? 'explore' : 'chat'); } catch {}
+  }
+}
+
 async function init() {
   loadSettings();
   loadSessions();
+  applyReadmeLinks();
+  let savedTab = null;
+  try { savedTab = localStorage.getItem('cc_main_tab'); } catch { /* ignore */ }
+  setMainTab(savedTab === 'explore' ? 'explore' : 'chat', { persist: false });
   try {
     const res = await fetch(`${API}/api/providers`);
     providers = await res.json();
@@ -750,6 +799,7 @@ async function sendAskAll(msgs) {
 // ── Submit handler ─────────────────────────────────────────────────────────
 chatForm.addEventListener('submit', async e => {
   e.preventDefault();
+  setMainTab('chat');
   if (isLoading) return;
   let text = userInput.value.trim();
   if (!text && !pendingFileText) return;
@@ -777,6 +827,17 @@ chatForm.addEventListener('submit', async e => {
   else if (chatMode === 'agent')  await sendAgent([...messages]);
   else                            await sendAuto([...messages]);
 });
+
+mainTabs?.addEventListener('click', e => {
+  const btn = e.target.closest('[data-main-tab]');
+  if (!btn) return;
+  setMainTab(btn.dataset.mainTab === 'explore' ? 'explore' : 'chat');
+});
+
+messagesEl.addEventListener('click', e => {
+  if (e.target.closest('.js-open-explore')) setMainTab('explore');
+});
+exploreBackToChat?.addEventListener('click', () => setMainTab('chat'));
 
 // ── Slash commands ─────────────────────────────────────────────────────────
 const SLASH_COMMANDS = [
@@ -972,6 +1033,10 @@ function showWelcome() {
         <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
       </div>
       <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
+      <div class="welcome-next-teaser">
+        <p class="welcome-next-label">Looking for more?</p>
+        <button type="button" class="welcome-next-btn js-open-explore" title="Open the What's next tab">Full OpenClaw &amp; roadmap →</button>
+      </div>
     </div>`;
   const cards = document.getElementById('providerCardsWelcome');
   for (const [id, p] of Object.entries(providers)) {
