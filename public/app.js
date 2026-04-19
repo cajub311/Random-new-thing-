@@ -11,6 +11,8 @@ let pendingFileText = null;
 let currentController = null;    // AbortController for in-flight requests
 let sessions    = [];            // [{id, title, mode, messages, updated}]
 let currentSessionId = null;
+let messageSeq = 0;
+function nextMsgId(prefix) { return `${prefix}-${++messageSeq}`; }
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
 const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
@@ -24,6 +26,15 @@ const getKeyLink     = document.getElementById('getKeyLink');
 const systemPrompt   = document.getElementById('systemPrompt');
 const tempRange      = document.getElementById('tempRange');
 const tempVal        = document.getElementById('tempVal');
+const maxTokensInput = document.getElementById('maxTokensInput');
+const settingsDrawer = document.getElementById('settingsDrawer');
+const settingsBackdrop = document.getElementById('settingsBackdrop');
+const settingsBtn    = document.getElementById('settingsBtn');
+const settingsCloseBtn = document.getElementById('settingsCloseBtn');
+const commandPalette = document.getElementById('commandPalette');
+const paletteBackdrop = document.getElementById('paletteBackdrop');
+const paletteSearch  = document.getElementById('paletteSearch');
+const paletteList    = document.getElementById('paletteList');
 const statusDot      = document.getElementById('statusDot');
 const statusText     = document.getElementById('statusText');
 const messagesEl     = document.getElementById('messages');
@@ -78,6 +89,22 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+function generationPayload() {
+  const temperature = Number(tempRange?.value);
+  const max_tokens = Number(maxTokensInput?.value);
+  return {
+    temperature: Number.isFinite(temperature) ? temperature : 0.7,
+    max_tokens: Number.isFinite(max_tokens) ? max_tokens : 4096,
+  };
+}
+
+function updateTempAria() {
+  if (!tempRange) return;
+  const v = tempRange.value;
+  tempRange.setAttribute('aria-valuenow', v);
+  if (tempVal) tempVal.textContent = v;
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
@@ -120,6 +147,7 @@ function buildProviderUI() {
     });
     providerCards.appendChild(card);
   }
+  refreshSettingsModelVisibility();
 }
 
 function restoreProvider() {
@@ -144,6 +172,8 @@ providerSelect.addEventListener('change', () => {
     if (m === p.defaultModel) opt.selected = true;
     modelSelect.appendChild(opt);
   }
+  const savedModel = localStorage.getItem(`cc_model_${id}`);
+  if (savedModel && p.models?.includes(savedModel)) modelSelect.value = savedModel;
 
   if (p.keyless) {
     keySection.style.display = 'none';
@@ -158,13 +188,33 @@ providerSelect.addEventListener('change', () => {
 
   updateStatus();
   localStorage.setItem('cc_provider', id);
+  refreshSettingsModelVisibility();
 });
 
-apiKeyInput.addEventListener('input', () => {
+function syncApiKeyFromInput() {
+  if (!keySection || keySection.style.display === 'none') return;
   const id = providerSelect.value;
+  const p = providers[id];
+  if (!p || p.keyless) return;
   const trimmed = apiKeyInput.value.trim();
   if (trimmed) localStorage.setItem(`cc_key_${id}`, trimmed);
-  else         localStorage.removeItem(`cc_key_${id}`);
+  else localStorage.removeItem(`cc_key_${id}`);
+}
+
+function keyForProvider(id) {
+  if (id === providerSelect.value && keySection?.style.display !== 'none') {
+    const live = apiKeyInput.value.trim();
+    if (live) return live;
+  }
+  return localStorage.getItem(`cc_key_${id}`) || '';
+}
+
+apiKeyInput.addEventListener('input', () => {
+  syncApiKeyFromInput();
+  updateStatus();
+});
+apiKeyInput.addEventListener('change', () => {
+  syncApiKeyFromInput();
   updateStatus();
 });
 
@@ -181,7 +231,11 @@ modeToggle.addEventListener('click', e => {
 });
 function setChatMode(mode) {
   chatMode = mode;
-  modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  modeToggle.querySelectorAll('.mode-btn').forEach(b => {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
   modeHint.textContent = MODE_HINTS[mode] || '';
   updateStatus();
   localStorage.setItem('cc_mode', mode);
@@ -190,6 +244,7 @@ function setChatMode(mode) {
 
 // ── Available providers helper ─────────────────────────────────────────────
 function getAvailableProviders({ toolsOnly = false } = {}) {
+  syncApiKeyFromInput();
   const preferred = providerSelect.value;
   const ordered = [preferred, ...PROVIDER_ORDER.filter(id => id !== preferred)];
   return ordered
@@ -198,11 +253,21 @@ function getAvailableProviders({ toolsOnly = false } = {}) {
     .map(id => {
       const p = providers[id];
       if (p.keyless) return { id, key: '' };
-      const key = localStorage.getItem(`cc_key_${id}`) || '';
+      const key = keyForProvider(id);
       if (key || p.configured) return { id, key };
       return null;
     })
     .filter(Boolean);
+}
+
+function refreshSettingsModelVisibility() {
+  const field = document.getElementById('settingsModelField');
+  if (!field || !modelSelect) return;
+  const id = providerSelect.value;
+  const p = providers[id];
+  const n = p?.models?.length || 0;
+  field.style.display = n > 1 ? '' : 'none';
+  modelSelect.disabled = n <= 1;
 }
 
 // ── Status helpers ─────────────────────────────────────────────────────────
@@ -278,6 +343,7 @@ async function streamChat(id, key, msgs, name) {
         provider: id,
         model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
         apiKey: key || undefined,
+        ...generationPayload(),
         messages: [
           { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
           ...msgs,
@@ -319,13 +385,15 @@ async function streamChat(id, key, msgs, name) {
           if (event === 'delta' && obj.content) {
             buffer += obj.content;
             if (!hadAny) { bodyEl.innerHTML = ''; hadAny = true; }
-            bodyEl.innerHTML = renderMarkdown(buffer) + '<span class="cursor">▋</span>';
+            bodyEl.closest('.message')?.setAttribute('aria-busy', 'false');
+            bodyEl.innerHTML = renderMarkdown(buffer) + '<span class="cursor" aria-hidden="true">▋</span>';
             messagesEl.scrollTop = messagesEl.scrollHeight;
           } else if (event === 'done') {
             // final render without cursor
             bodyEl.innerHTML = renderMarkdown(buffer);
             enhanceCodeBlocks(bodyEl);
             bodyEl.classList.remove('streaming');
+            bodyEl.closest('.message')?.setAttribute('aria-busy', 'false');
             wireMessageActions(bubble, buffer);
             messages.push({ role: 'assistant', content: buffer });
             setStatus('online', `${name} responded`);
@@ -345,6 +413,7 @@ async function streamChat(id, key, msgs, name) {
       bodyEl.innerHTML = renderMarkdown(buffer);
       enhanceCodeBlocks(bodyEl);
       bodyEl.classList.remove('streaming');
+      bodyEl.closest('.message')?.setAttribute('aria-busy', 'false');
       wireMessageActions(bubble, buffer);
       messages.push({ role: 'assistant', content: buffer });
       saveCurrentSession();
@@ -357,6 +426,7 @@ async function streamChat(id, key, msgs, name) {
       bodyEl.innerHTML = renderMarkdown(buffer || '_(stopped)_');
       enhanceCodeBlocks(bodyEl);
       bodyEl.classList.remove('streaming');
+      bodyEl.closest('.message')?.setAttribute('aria-busy', 'false');
       wireMessageActions(bubble, buffer);
       if (buffer) messages.push({ role: 'assistant', content: buffer });
       setStatus('online', 'Stopped');
@@ -371,7 +441,88 @@ async function streamChat(id, key, msgs, name) {
   }
 }
 
-// ── Agent mode ────────────────────────────────────────────────────────────
+// ── Agent mode (SSE: streamed tokens + live tool UI) ───────────────────────
+function typingDotsHtml() {
+  return `<div class="typing-bubble agent-inline-dots" aria-hidden="true"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>`;
+}
+
+function formatToolArgsForBanner(tool, args) {
+  if (!args || typeof args !== 'object') return '';
+  const q = v => {
+    const s = String(v ?? '');
+    return s.length > 72 ? `${s.slice(0, 72)}…` : s;
+  };
+  if (tool === 'web_search' && args.query != null) return `'${q(args.query)}'`;
+  if (tool === 'fetch_url' && args.url != null) return `'${q(args.url)}'`;
+  if (tool === 'create_file' && args.filename != null) return `'${q(args.filename)}'`;
+  if (tool === 'generate_image' && args.prompt != null) return `'${q(args.prompt)}'`;
+  if (tool === 'draft_email' && args.to != null) return `'${q(args.to)}'`;
+  if (tool === 'calculate' && args.expression != null) return `'${q(args.expression)}'`;
+  if (tool === 'remember' && args.text != null) return `'${q(args.text)}'`;
+  if (tool === 'recall' && args.query != null) return `'${q(args.query)}'`;
+  return '';
+}
+
+function createAgentStreamShell(providerId) {
+  removeWelcome();
+  const div = document.createElement('div');
+  const aid = nextMsgId('msg');
+  const labelId = `${aid}-label`;
+  const bubbleId = `${aid}-bubble`;
+  const name = providers[providerId]?.name || 'AI';
+  div.className = 'message assistant agent-stream-msg';
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-labelledby', labelId);
+  div.setAttribute('aria-busy', 'true');
+  div.innerHTML = `
+    <div class="msg-meta" id="${labelId}">
+      <span class="msg-avatar" aria-hidden="true">🤖</span>
+      <strong>${escapeHtml(name)}</strong>
+      <span class="agent-badge" aria-label="Agent mode">agent</span>
+      <span class="msg-time" aria-hidden="true">${timestamp()}</span>
+    </div>
+    <div class="agent-tool-banner" hidden role="status" aria-live="polite"></div>
+    <div class="agent-live-tools" aria-label="Tool activity"></div>
+    <div class="agent-wait-wrap">${typingDotsHtml()}</div>
+    <div class="msg-bubble agent-stream-bubble streaming" id="${bubbleId}" tabindex="-1" aria-label="Assistant reply"></div>
+    <div class="msg-actions">
+      <button type="button" class="msg-action-btn copy-btn" aria-label="Copy assistant reply">Copy</button>
+    </div>`;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return {
+    root: div,
+    banner: div.querySelector('.agent-tool-banner'),
+    liveTools: div.querySelector('.agent-live-tools'),
+    waitWrap: div.querySelector('.agent-wait-wrap'),
+    bodyEl: div.querySelector('.agent-stream-bubble'),
+  };
+}
+
+function setAgentToolBanner(banner, tool, args) {
+  if (!banner) return;
+  const detail = formatToolArgsForBanner(tool, args);
+  banner.textContent = detail
+    ? `🛠️ Running ${tool} for ${detail}…`
+    : `🛠️ Running ${tool}…`;
+  banner.hidden = false;
+}
+
+function hideAgentToolBanner(banner) {
+  if (!banner) return;
+  banner.hidden = true;
+  banner.textContent = '';
+}
+
+function appendAnimatedToolResult(container, item) {
+  if (!container || item.tool === 'final_answer') return;
+  const wrap = document.createElement('div');
+  wrap.className = 'agent-tool-result';
+  wrap.innerHTML = renderTraceItem(item);
+  container.appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add('agent-tool-result--visible'));
+}
+
 async function sendAgent(msgs) {
   const available = getAvailableProviders({ toolsOnly: true });
   if (available.length === 0) {
@@ -380,18 +531,23 @@ async function sendAgent(msgs) {
   }
   const { id, key } = available[0];
   const name = providers[id].name;
-  const typingId = appendTyping(`${name} (Agent)`);
   currentController = new AbortController();
   setLoading(true, true);
 
+  const shell = createAgentStreamShell(id);
+  const { banner, liveTools, waitWrap, bodyEl } = shell;
+  let buffer = '';
+  let sawDelta = false;
+
   try {
-    const res = await fetch(`${API}/api/agent`, {
+    const res = await fetch(`${API}/api/agent/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         provider: id,
         model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
         apiKey: key || undefined,
+        ...generationPayload(),
         messages: [
           { role: 'system', content: systemPrompt.value || 'You are a helpful assistant with tools.' },
           ...msgs,
@@ -400,28 +556,112 @@ async function sendAgent(msgs) {
       }),
       signal: currentController.signal,
     });
-    const data = await res.json();
-    removeTyping(typingId);
-    if (!res.ok || data.error) {
-      appendMessage('assistant', `Agent error: ${data.error || res.statusText}`, true, id);
+
+    if (!res.ok || !res.body) {
+      let errMsg = `HTTP ${res.status}`;
+      try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
+      shell.root.remove();
+      appendMessage('assistant', `Agent error: ${errMsg}`, true, id);
       setStatus('error', 'Agent failed');
       return;
     }
-    appendAgentMessage(id, data);
-    messages.push({ role: 'assistant', content: data.reply || '' });
-    setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
-    activePill.textContent = `🤖 ${name}`;
-    activePill.className = 'provider-pill online';
-    saveCurrentSession();
-    loadFiles();
-  } catch (err) {
-    removeTyping(typingId);
-    if (err.name !== 'AbortError') {
-      appendMessage('assistant', `Agent error: ${err.message}`, true);
-      setStatus('error', 'Agent failed');
-    } else {
-      setStatus('online', 'Stopped');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let parseBuf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      parseBuf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = parseBuf.indexOf('\n\n')) >= 0) {
+        const chunk = parseBuf.slice(0, idx);
+        parseBuf = parseBuf.slice(idx + 2);
+        const lines = chunk.split('\n');
+        let event = 'message';
+        let data = '';
+        for (const l of lines) {
+          if (l.startsWith('event:')) event = l.slice(6).trim();
+          else if (l.startsWith('data:')) data += l.slice(5).trim();
+        }
+        if (!data) continue;
+        let obj;
+        try { obj = JSON.parse(data); } catch { continue; }
+
+        if (event === 'delta' && obj.content) {
+          if (!sawDelta) {
+            sawDelta = true;
+            if (waitWrap) waitWrap.innerHTML = '';
+          }
+          buffer += obj.content;
+          bodyEl.innerHTML = renderMarkdown(buffer) + '<span class="cursor" aria-hidden="true">▋</span>';
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (event === 'tool_start') {
+          setAgentToolBanner(banner, obj.tool, obj.args);
+          if (waitWrap && !sawDelta) waitWrap.innerHTML = typingDotsHtml();
+        } else if (event === 'tool_result') {
+          hideAgentToolBanner(banner);
+          if (waitWrap) waitWrap.innerHTML = '';
+          appendAnimatedToolResult(liveTools, {
+            tool: obj.tool,
+            args: obj.args,
+            result: obj.result,
+            step: (liveTools?.children?.length || 0) + 1,
+          });
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (event === 'done') {
+          bodyEl.innerHTML = renderMarkdown(buffer || obj.reply || '');
+          enhanceCodeBlocks(bodyEl);
+          bodyEl.classList.remove('streaming');
+          shell.root.setAttribute('aria-busy', 'false');
+          hideAgentToolBanner(banner);
+          if (waitWrap) waitWrap.innerHTML = '';
+          wireMessageActions(shell.root, buffer || obj.reply || '');
+          messages.push({ role: 'assistant', content: buffer || obj.reply || '' });
+          setStatus('online', `${name} answered (${obj.steps} step${obj.steps === 1 ? '' : 's'})`);
+          activePill.textContent = `🤖 ${name}`;
+          activePill.className = 'provider-pill online';
+          saveCurrentSession();
+          loadFiles();
+          if (obj.trace?.some(t => t.tool === 'remember' && t.result?.id)) loadMemory();
+          return;
+        } else if (event === 'error') {
+          throw new Error(obj.message || 'stream error');
+        }
+      }
     }
+
+    if (buffer && bodyEl) {
+      bodyEl.innerHTML = renderMarkdown(buffer);
+      enhanceCodeBlocks(bodyEl);
+      bodyEl.classList.remove('streaming');
+      shell.root.setAttribute('aria-busy', 'false');
+      hideAgentToolBanner(banner);
+      if (waitWrap) waitWrap.innerHTML = '';
+      wireMessageActions(shell.root, buffer);
+      messages.push({ role: 'assistant', content: buffer });
+      saveCurrentSession();
+      setStatus('online', `${name} responded`);
+      activePill.textContent = `🤖 ${name}`;
+      activePill.className = 'provider-pill online';
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      bodyEl.innerHTML = renderMarkdown(buffer || '_(stopped)_');
+      enhanceCodeBlocks(bodyEl);
+      bodyEl.classList.remove('streaming');
+      shell.root.setAttribute('aria-busy', 'false');
+      hideAgentToolBanner(banner);
+      if (waitWrap) waitWrap.innerHTML = '';
+      wireMessageActions(shell.root, buffer);
+      if (buffer) messages.push({ role: 'assistant', content: buffer });
+      setStatus('online', 'Stopped');
+      return;
+    }
+    shell.root.remove();
+    appendMessage('assistant', `Agent error: ${err.message}`, true, id);
+    setStatus('error', 'Agent failed');
   } finally {
     currentController = null;
     setLoading(false);
@@ -446,8 +686,9 @@ async function sendAskAll(msgs) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: id,
-          model: providers[id].defaultModel,
+          model: providerSelect.value === id ? modelSelect.value : providers[id].defaultModel,
           apiKey: key || undefined,
+          ...generationPayload(),
           messages: [
             { role: 'system', content: systemPrompt.value || 'You are a helpful assistant.' },
             ...msgs,
@@ -559,8 +800,8 @@ userInput.addEventListener('input', () => {
     const matches = SLASH_COMMANDS.filter(s => s.cmd.startsWith(v.toLowerCase()));
     if (matches.length) {
       slashMenu.hidden = false;
-      slashMenu.innerHTML = matches.map(m =>
-        `<div class="slash-item" data-cmd="${m.cmd}"><code>${m.cmd}</code><span>${escapeHtml(m.desc)}</span></div>`
+      slashMenu.innerHTML = matches.map((m, i) =>
+        `<div class="slash-item" role="option" id="slash-opt-${i}" data-cmd="${escapeAttr(m.cmd)}"><code>${escapeHtml(m.cmd)}</code><span>${escapeHtml(m.desc)}</span></div>`
       ).join('');
       return;
     }
@@ -579,24 +820,169 @@ slashMenu.addEventListener('click', e => {
   }
 });
 
+// ── Settings drawer ────────────────────────────────────────────────────────
+let settingsFocusEl = null;
+function openSettings() {
+  if (!settingsDrawer) return;
+  settingsFocusEl = document.activeElement;
+  settingsDrawer.hidden = false;
+  settingsBackdrop.hidden = false;
+  settingsDrawer.setAttribute('aria-hidden', 'false');
+  settingsBackdrop.setAttribute('aria-hidden', 'false');
+  settingsBtn?.setAttribute('aria-expanded', 'true');
+  refreshSettingsModelVisibility();
+  updateTempAria();
+  settingsCloseBtn?.focus();
+}
+function closeSettings() {
+  if (!settingsDrawer) return;
+  settingsDrawer.hidden = true;
+  settingsBackdrop.hidden = true;
+  settingsDrawer.setAttribute('aria-hidden', 'true');
+  settingsBackdrop.setAttribute('aria-hidden', 'true');
+  settingsBtn?.setAttribute('aria-expanded', 'false');
+  if (settingsFocusEl && typeof settingsFocusEl.focus === 'function') settingsFocusEl.focus();
+  else userInput?.focus();
+  settingsFocusEl = null;
+}
+settingsBtn?.addEventListener('click', () => openSettings());
+settingsCloseBtn?.addEventListener('click', () => closeSettings());
+settingsBackdrop?.addEventListener('click', () => closeSettings());
+modelSelect?.addEventListener('change', () => {
+  localStorage.setItem(`cc_model_${providerSelect.value}`, modelSelect.value);
+});
+tempRange?.addEventListener('input', () => {
+  updateTempAria();
+  localStorage.setItem('cc_temp', tempRange.value);
+});
+maxTokensInput?.addEventListener('input', () => {
+  localStorage.setItem('cc_max_tokens', String(maxTokensInput.value));
+});
+
+// ── Command palette (⌘/Ctrl + K) ───────────────────────────────────────────
+const PALETTE_ACTIONS = [
+  { id: 'new', label: 'New chat', keywords: 'conversation clear', run: () => { closePalette(); newSession(); userInput?.focus(); } },
+  { id: 'chat', label: 'Switch to Chat mode', keywords: 'auto', run: () => { closePalette(); setChatMode('auto'); } },
+  { id: 'agent', label: 'Switch to Agent mode', keywords: 'tools', run: () => { closePalette(); setChatMode('agent'); } },
+  { id: 'askall', label: 'Switch to Ask All mode', keywords: 'providers', run: () => { closePalette(); setChatMode('ask-all'); } },
+  { id: 'sidebar', label: 'Toggle sidebar', keywords: 'menu conversations provider', run: () => { closePalette(); toggleSidebar(); } },
+  { id: 'settings', label: 'Open settings', keywords: 'temperature tokens model', run: () => { closePalette(); openSettings(); } },
+  { id: 'export', label: 'Export chat as markdown', keywords: 'download', run: () => { closePalette(); exportChat(); } },
+  { id: 'clear', label: 'Clear conversation', keywords: 'delete trash', run: () => { closePalette(); messages = []; showWelcome(); saveCurrentSession(); userInput?.focus(); } },
+  { id: 'focus', label: 'Focus message input', keywords: 'type compose', run: () => { closePalette(); userInput?.focus(); } },
+];
+
+let paletteFocusEl = null;
+let paletteSelected = 0;
+
+function getPaletteRows(needle) {
+  const n = needle.trim().toLowerCase();
+  return PALETTE_ACTIONS.filter(a => {
+    if (!n) return true;
+    return a.label.toLowerCase().includes(n)
+      || (a.keywords && a.keywords.toLowerCase().includes(n))
+      || a.id.includes(n);
+  });
+}
+
+function closePalette() {
+  if (!commandPalette) return;
+  commandPalette.hidden = true;
+  paletteBackdrop.hidden = true;
+  commandPalette.setAttribute('aria-hidden', 'true');
+  paletteBackdrop.setAttribute('aria-hidden', 'true');
+  paletteSearch.value = '';
+  if (paletteFocusEl && typeof paletteFocusEl.focus === 'function') paletteFocusEl.focus();
+  else userInput?.focus();
+  paletteFocusEl = null;
+}
+
+function openPalette() {
+  if (!commandPalette || isLoading) return;
+  paletteFocusEl = document.activeElement;
+  commandPalette.hidden = false;
+  paletteBackdrop.hidden = false;
+  commandPalette.setAttribute('aria-hidden', 'false');
+  paletteBackdrop.setAttribute('aria-hidden', 'false');
+  paletteSelected = 0;
+  filterPalette('');
+  paletteSearch?.focus();
+}
+
+function filterPalette(q) {
+  const rows = getPaletteRows(q);
+  if (!paletteList) return;
+  paletteSelected = Math.min(paletteSelected, Math.max(0, rows.length - 1));
+  paletteList.innerHTML = rows.map((a, i) =>
+    `<li role="option" class="palette-item${i === paletteSelected ? ' active' : ''}" data-idx="${i}" id="pal-opt-${a.id}" data-action="${escapeAttr(a.id)}">${escapeHtml(a.label)}</li>`
+  ).join('');
+  paletteList.querySelectorAll('.palette-item').forEach((el, i) => {
+    el.addEventListener('mousedown', e => e.preventDefault());
+    el.addEventListener('click', () => runPaletteIndex(i, rows));
+  });
+}
+
+function runPaletteIndex(i, rows) {
+  const row = rows[i];
+  if (row) row.run();
+}
+
+function isSidebarVisible() {
+  const mobile = window.matchMedia('(max-width: 640px)').matches;
+  return mobile ? sidebar.classList.contains('open') : !sidebar.classList.contains('collapsed');
+}
+
+function syncSidebarAria() {
+  sidebarToggle?.setAttribute('aria-expanded', isSidebarVisible() ? 'true' : 'false');
+}
+
+function toggleSidebar() {
+  sidebar.classList.toggle('collapsed');
+  sidebar.classList.toggle('open');
+  syncSidebarAria();
+}
+
+paletteSearch?.addEventListener('input', () => {
+  paletteSelected = 0;
+  filterPalette(paletteSearch.value);
+});
+paletteSearch?.addEventListener('keydown', e => {
+  const rows = getPaletteRows(paletteSearch.value);
+  const maxIdx = Math.max(0, rows.length - 1);
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    paletteSelected = Math.min(paletteSelected + 1, maxIdx);
+    filterPalette(paletteSearch.value);
+    paletteList.querySelector(`.palette-item:nth-child(${paletteSelected + 1})`)?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    paletteSelected = Math.max(paletteSelected - 1, 0);
+    filterPalette(paletteSearch.value);
+    paletteList.querySelector(`.palette-item:nth-child(${paletteSelected + 1})`)?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    runPaletteIndex(paletteSelected, rows);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    closePalette();
+  }
+});
+paletteBackdrop?.addEventListener('click', () => closePalette());
+
 // ── UI controls ────────────────────────────────────────────────────────────
 toggleKeyBtn.addEventListener('click', () => {
   apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
 });
 
-tempRange.addEventListener('input', () => tempVal.textContent = tempRange.value);
-
 clearBtn.addEventListener('click', () => { messages = []; showWelcome(); saveCurrentSession(); });
 newChatBtn.addEventListener('click', () => newSession());
 
-sidebarToggle.addEventListener('click', () => {
-  sidebar.classList.toggle('collapsed');
-  sidebar.classList.toggle('open');
-});
+sidebarToggle.addEventListener('click', () => toggleSidebar());
 
 document.getElementById('sidebarClose')?.addEventListener('click', () => {
   sidebar.classList.remove('open');
   sidebar.classList.add('collapsed');
+  syncSidebarAria();
 });
 
 // ── Voice input (Web Speech API) ──────────────────────────────────────────
@@ -804,7 +1190,7 @@ userInput.addEventListener('keydown', e => {
     chatForm.dispatchEvent(new Event('submit'));
   }
   if (e.key === 'Escape') {
-    slashMenu.hidden = true;
+    if (!slashMenu.hidden) { slashMenu.hidden = true; return; }
     if (isLoading && currentController) currentController.abort();
   }
 });
@@ -830,13 +1216,13 @@ function showWelcome() {
       <h1>OpenClaw</h1>
       <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
       <div class="provider-cards" id="providerCardsWelcome"></div>
-      <div class="quick-prompts">
-        <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
-        <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+      <div class="quick-prompts" role="group" aria-label="Example prompts">
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
+        <button type="button" class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
       </div>
       <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
     </div>`;
@@ -859,18 +1245,24 @@ function showWelcome() {
 function appendAssistantShell(providerId = null) {
   removeWelcome();
   const div = document.createElement('div');
+  const aid = nextMsgId('msg');
+  const labelId = `${aid}-label`;
+  const bubbleId = `${aid}-bubble`;
   div.className = 'message assistant';
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-labelledby', labelId);
+  div.setAttribute('aria-busy', 'true');
   const name = providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name || 'AI';
   div.innerHTML = `
-    <div class="msg-meta">
-      <span class="msg-avatar">🐾</span>
+    <div class="msg-meta" id="${labelId}">
+      <span class="msg-avatar" aria-hidden="true">🐾</span>
       <strong>${escapeHtml(name)}</strong>
-      <span>${timestamp()}</span>
+      <span class="msg-time" aria-hidden="true">${timestamp()}</span>
     </div>
-    <div class="msg-bubble"></div>
+    <div class="msg-bubble" id="${bubbleId}" tabindex="-1" aria-label="Assistant reply"></div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
-      <button class="msg-action-btn retry-btn">Retry</button>
+      <button type="button" class="msg-action-btn copy-btn" aria-label="Copy assistant reply">Copy</button>
+      <button type="button" class="msg-action-btn retry-btn" aria-label="Retry last prompt">Retry</button>
     </div>`;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -880,21 +1272,27 @@ function appendAssistantShell(providerId = null) {
 function appendMessage(role, content, isError = false, providerId = null, isAskAll = false) {
   removeWelcome();
   const div = document.createElement('div');
+  const aid = nextMsgId('msg');
+  const labelId = `${aid}-label`;
+  const bubbleId = `${aid}-bubble`;
   div.className = `message ${role}${isAskAll ? ' ask-all-group' : ''}`;
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-labelledby', labelId);
   const avatar = role === 'user' ? '🧑' : '🐾';
   const name = role === 'user'
     ? 'You'
     : (providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name) || 'AI';
+  const copyLabel = role === 'user' ? 'Copy your message' : 'Copy assistant reply';
   div.innerHTML = `
-    <div class="msg-meta">
-      <span class="msg-avatar">${avatar}</span>
+    <div class="msg-meta" id="${labelId}">
+      <span class="msg-avatar" aria-hidden="true">${avatar}</span>
       <strong>${escapeHtml(name)}</strong>
-      <span>${timestamp()}</span>
+      <span class="msg-time" aria-hidden="true">${timestamp()}</span>
     </div>
-    <div class="msg-bubble${isError ? ' error-bubble' : ''}">${renderMarkdown(content)}</div>
+    <div class="msg-bubble${isError ? ' error-bubble' : ''}" id="${bubbleId}" tabindex="-1" aria-label="${role === 'assistant' ? 'Assistant reply' : 'Your message'}">${renderMarkdown(content)}</div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
-      ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
+      <button type="button" class="msg-action-btn copy-btn" aria-label="${escapeAttr(copyLabel)}">Copy</button>
+      ${role === 'assistant' && !isAskAll ? '<button type="button" class="msg-action-btn retry-btn" aria-label="Retry last prompt">Retry</button>' : ''}
     </div>`;
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
   wireMessageActions(div, content);
@@ -907,8 +1305,15 @@ function wireMessageActions(div, content) {
   div.querySelector('.copy-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(content);
     const btn = div.querySelector('.copy-btn');
+    const prev = btn.getAttribute('aria-label') || 'Copy';
     btn.textContent = 'Copied!';
-    setTimeout(() => { if (btn) btn.textContent = 'Copy'; }, 2000);
+    btn.setAttribute('aria-label', 'Copied to clipboard');
+    setTimeout(() => {
+      if (btn) {
+        btn.textContent = 'Copy';
+        btn.setAttribute('aria-label', prev);
+      }
+    }, 2000);
   });
   div.querySelector('.retry-btn')?.addEventListener('click', () => {
     if (messages[messages.length - 1]?.role === 'assistant') messages.pop();
@@ -929,8 +1334,10 @@ function enhanceCodeBlocks(root) {
       try { hljs.highlightElement(code); } catch {}
     }
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'copy-code-btn';
     btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code block');
     btn.addEventListener('click', () => {
       navigator.clipboard.writeText(code?.textContent || pre.textContent);
       btn.textContent = 'Copied!';
@@ -944,35 +1351,36 @@ function enhanceCodeBlocks(root) {
 function appendAgentMessage(providerId, data) {
   removeWelcome();
   const div = document.createElement('div');
+  const aid = nextMsgId('msg');
+  const labelId = `${aid}-label`;
+  const bubbleId = `${aid}-bubble`;
   div.className = 'message assistant';
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-labelledby', labelId);
   const name = providers[providerId]?.name || 'AI';
   const trace = data.trace || [];
   const traceHtml = trace.length
     ? `<details class="trace" open>
-        <summary>🛠️ ${trace.length} tool call${trace.length === 1 ? '' : 's'}</summary>
+        <summary><span aria-hidden="true">🛠️</span> ${trace.length} tool call${trace.length === 1 ? '' : 's'}</summary>
         ${trace.map(renderTraceItem).join('')}
        </details>`
     : '';
+  const replyText = data.reply || '(no reply)';
   div.innerHTML = `
-    <div class="msg-meta">
-      <span class="msg-avatar">🤖</span>
+    <div class="msg-meta" id="${labelId}">
+      <span class="msg-avatar" aria-hidden="true">🤖</span>
       <strong>${escapeHtml(name)}</strong>
-      <span class="agent-badge">agent</span>
-      <span>${timestamp()}</span>
+      <span class="agent-badge" aria-label="Agent mode">agent</span>
+      <span class="msg-time" aria-hidden="true">${timestamp()}</span>
     </div>
     ${traceHtml}
-    <div class="msg-bubble">${renderMarkdown(data.reply || '(no reply)')}</div>
+    <div class="msg-bubble" id="${bubbleId}" tabindex="-1" aria-label="Assistant reply">${renderMarkdown(replyText)}</div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
+      <button type="button" class="msg-action-btn copy-btn" aria-label="Copy assistant reply">Copy</button>
     </div>`;
 
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
-  div.querySelector('.copy-btn')?.addEventListener('click', () => {
-    navigator.clipboard.writeText(data.reply || '');
-    const btn = div.querySelector('.copy-btn');
-    btn.textContent = 'Copied!';
-    setTimeout(() => { if (btn) btn.textContent = 'Copy'; }, 2000);
-  });
+  wireMessageActions(div, replyText);
 
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -1129,9 +1537,13 @@ function appendTyping(providerName = 'AI') {
   const div = document.createElement('div');
   div.className = 'message assistant';
   div.id = id;
+  div.setAttribute('role', 'status');
+  div.setAttribute('aria-live', 'polite');
+  div.setAttribute('aria-busy', 'true');
+  div.setAttribute('aria-label', `${providerName} is thinking`);
   div.innerHTML = `
-    <div class="msg-meta"><span class="msg-avatar">🐾</span><strong>${escapeHtml(providerName)}</strong></div>
-    <div class="msg-bubble">
+    <div class="msg-meta"><span class="msg-avatar" aria-hidden="true">🐾</span><strong>${escapeHtml(providerName)}</strong></div>
+    <div class="msg-bubble" aria-hidden="true">
       <div class="typing-bubble">
         <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
       </div>
@@ -1292,16 +1704,51 @@ function loadSettings() {
   const mode = localStorage.getItem('cc_mode');
   if (mode && ['auto', 'agent', 'ask-all'].includes(mode)) {
     chatMode = mode;
-    modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    modeToggle.querySelectorAll('.mode-btn').forEach(b => {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
     modeHint.textContent = MODE_HINTS[mode] || '';
   }
+  const mt = localStorage.getItem('cc_max_tokens');
+  if (mt && maxTokensInput) {
+    const n = Number(mt);
+    if (Number.isFinite(n)) maxTokensInput.value = String(n);
+  }
+  updateTempAria();
 }
 
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
-tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
+
+document.addEventListener('keydown', e => {
+  const k = e.key?.toLowerCase();
+  if ((e.metaKey || e.ctrlKey) && k === 'k') {
+    e.preventDefault();
+    if (commandPalette && !commandPalette.hidden) closePalette();
+    else openPalette();
+    return;
+  }
+  if (k === 'escape') {
+    if (commandPalette && !commandPalette.hidden) {
+      e.preventDefault();
+      closePalette();
+      return;
+    }
+    if (settingsDrawer && !settingsDrawer.hidden) {
+      e.preventDefault();
+      closeSettings();
+    }
+  }
+});
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-init().then(() => { loadFiles(); loadMemory(); });
+init().then(() => {
+  loadFiles();
+  loadMemory();
+  syncSidebarAria();
+});
+window.addEventListener('resize', () => { syncSidebarAria(); });
 // Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
 setInterval(async () => {
   try {
