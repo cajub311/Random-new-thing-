@@ -56,6 +56,11 @@ const historyRailToggle = document.getElementById('historyRailToggle');
 const historySearchInput = document.getElementById('historySearchInput');
 const historyList      = document.getElementById('historyList');
 const headerNewChatBtn = document.getElementById('headerNewChatBtn');
+const bottomNav        = document.getElementById('bottomNav');
+const bottomNavChat    = document.getElementById('bottomNavChat');
+const bottomNavHistory = document.getElementById('bottomNavHistory');
+const bottomNavSettings= document.getElementById('bottomNavSettings');
+const sheetBackdrop    = document.getElementById('sheetBackdrop');
 const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
@@ -259,17 +264,50 @@ function trustBarHtml() {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
+const PROVIDERS_CACHE_KEY = 'cc_providers_cache';
+
+function loadCachedProviders() {
+  try {
+    const raw = localStorage.getItem(PROVIDERS_CACHE_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' && o.providers ? o.providers : o;
+  } catch {
+    return null;
+  }
+}
+
+function saveProvidersCache(data) {
+  try {
+    localStorage.setItem(PROVIDERS_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), providers: data }));
+  } catch { /* quota */ }
+}
+
 async function init() {
   loadSettings();
   await loadSessions();
   try {
     const res = await fetch(`${API}/api/providers`);
-    providers = await res.json();
-    buildProviderUI();
-    restoreProvider();
-    updateStatus();
+    if (res.ok) {
+      providers = await res.json();
+      saveProvidersCache(providers);
+      buildProviderUI();
+      restoreProvider();
+      updateStatus();
+    } else {
+      throw new Error(`HTTP ${res.status}`);
+    }
   } catch (e) {
-    setStatus('error', 'Cannot reach server');
+    const cached = loadCachedProviders();
+    if (cached && typeof cached === 'object' && Object.keys(cached).length) {
+      providers = cached;
+      buildProviderUI();
+      restoreProvider();
+      setStatus('warning', 'Offline — cached model list');
+    } else {
+      providers = {};
+      setStatus('error', 'Cannot reach server');
+    }
   }
   renderHistoryList();
 }
@@ -297,6 +335,11 @@ function buildProviderUI() {
       providerSelect.dispatchEvent(new Event('change'));
       sidebar.classList.remove('collapsed');
       sidebar.classList.add('open');
+      if (isMobileNavLayout()) {
+        applyHistoryRailCollapsed(true);
+        showSheetBackdrop();
+        syncBottomNavState();
+      }
     });
     providerCards.appendChild(card);
   }
@@ -769,14 +812,116 @@ tempRange.addEventListener('input', () => tempVal.textContent = tempRange.value)
 clearBtn.addEventListener('click', () => { messages = []; showWelcome(); saveCurrentSession(); });
 newChatBtn.addEventListener('click', () => newSession());
 
+function isMobileNavLayout() {
+  return window.matchMedia('(max-width: 640px)').matches;
+}
+
+function showSheetBackdrop() {
+  if (sheetBackdrop) sheetBackdrop.hidden = false;
+}
+
+function hideSheetBackdrop() {
+  if (sheetBackdrop) sheetBackdrop.hidden = true;
+}
+
+function syncBottomNavState() {
+  if (!bottomNavChat) return;
+  if (!isMobileNavLayout()) {
+    [bottomNavChat, bottomNavHistory, bottomNavSettings].forEach(b => b?.removeAttribute('aria-current'));
+    return;
+  }
+  const settingsOpen = sidebar.classList.contains('open');
+  const historyOpen = historyRail && !historyRail.classList.contains('collapsed');
+  bottomNavChat.removeAttribute('aria-current');
+  bottomNavHistory.removeAttribute('aria-current');
+  bottomNavSettings.removeAttribute('aria-current');
+  if (settingsOpen) bottomNavSettings.setAttribute('aria-current', 'page');
+  else if (historyOpen) bottomNavHistory.setAttribute('aria-current', 'page');
+  else bottomNavChat.setAttribute('aria-current', 'page');
+}
+
+function closeMobilePanels() {
+  sidebar.classList.remove('open');
+  sidebar.classList.add('collapsed');
+  applyHistoryRailCollapsed(true);
+  hideSheetBackdrop();
+  syncBottomNavState();
+}
+
+function deleteSessionById(id) {
+  sessions = sessions.filter(s => s.id !== id);
+  void persistSessionsToDisk();
+  if (id === currentSessionId) {
+    currentSessionId = null;
+    messages = [];
+    localStorage.removeItem('cc_current_session');
+    showWelcome();
+  }
+  renderHistoryList();
+  syncBottomNavState();
+}
+
 sidebarToggle.addEventListener('click', () => {
   sidebar.classList.toggle('collapsed');
   sidebar.classList.toggle('open');
+  if (isMobileNavLayout()) {
+    if (sidebar.classList.contains('open')) {
+      applyHistoryRailCollapsed(true);
+      showSheetBackdrop();
+    } else if (!historyRail?.classList.contains('collapsed')) {
+      showSheetBackdrop();
+    } else {
+      hideSheetBackdrop();
+    }
+    syncBottomNavState();
+  }
 });
 
 document.getElementById('sidebarClose')?.addEventListener('click', () => {
   sidebar.classList.remove('open');
   sidebar.classList.add('collapsed');
+  if (isMobileNavLayout()) {
+    if (!historyRail?.classList.contains('collapsed')) showSheetBackdrop();
+    else hideSheetBackdrop();
+    syncBottomNavState();
+  }
+});
+
+sheetBackdrop?.addEventListener('click', () => {
+  if (!isMobileNavLayout()) return;
+  closeMobilePanels();
+});
+
+bottomNavChat?.addEventListener('click', () => {
+  if (!isMobileNavLayout()) return;
+  closeMobilePanels();
+  userInput?.focus();
+});
+
+bottomNavHistory?.addEventListener('click', () => {
+  if (!isMobileNavLayout()) return;
+  sidebar.classList.remove('open');
+  sidebar.classList.add('collapsed');
+  applyHistoryRailCollapsed(false);
+  showSheetBackdrop();
+  syncBottomNavState();
+  historySearchInput?.focus();
+});
+
+bottomNavSettings?.addEventListener('click', () => {
+  if (!isMobileNavLayout()) return;
+  applyHistoryRailCollapsed(true);
+  sidebar.classList.remove('collapsed');
+  sidebar.classList.add('open');
+  showSheetBackdrop();
+  syncBottomNavState();
+});
+
+window.addEventListener('resize', () => {
+  if (!isMobileNavLayout()) {
+    hideSheetBackdrop();
+    syncBottomNavState();
+  }
 });
 
 // ── Voice input (Web Speech API) ──────────────────────────────────────────
@@ -824,11 +969,15 @@ document.getElementById('sidebarClose')?.addEventListener('click', () => {
   });
 })();
 
-// ── PWA: register service worker ──────────────────────────────────────────
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-  });
+// ── PWA: register service worker (HTTPS or localhost) ─────────────────────
+if ('serviceWorker' in navigator) {
+  const { protocol, hostname } = location;
+  const allowSw = protocol === 'https:' || hostname === 'localhost' || hostname === '127.0.0.1';
+  if (allowSw) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+  }
 }
 
 stopBtn.addEventListener('click', () => {
@@ -889,6 +1038,11 @@ function showWelcome() {
       providerSelect.dispatchEvent(new Event('change'));
       sidebar.classList.remove('collapsed');
       sidebar.classList.add('open');
+      if (isMobileNavLayout()) {
+        applyHistoryRailCollapsed(true);
+        showSheetBackdrop();
+        syncBottomNavState();
+      }
     });
     cards.appendChild(card);
   }
@@ -1192,6 +1346,7 @@ function newSession() {
   localStorage.removeItem('cc_current_session');
   showWelcome();
   renderHistoryList();
+  syncBottomNavState();
 }
 
 function saveCurrentSession() {
@@ -1287,12 +1442,17 @@ function renderHistoryList() {
     const prev = (s.preview || '').trim() || 'No messages yet';
     const when = formatSessionWhen(s.updated);
     return `<li class="history-item${s.id === currentSessionId ? ' active' : ''}" data-id="${escapeAttr(s.id)}" role="button" tabindex="0">
-      <div class="history-item-actions">
-        <button type="button" class="history-item-del" data-del="${escapeAttr(s.id)}" title="Delete thread" aria-label="Delete">×</button>
+      <div class="history-item-track">
+        <div class="history-item-surface">
+          <div class="history-item-actions">
+            <button type="button" class="history-item-del" data-del="${escapeAttr(s.id)}" title="Delete thread" aria-label="Delete">×</button>
+          </div>
+          <div class="history-item-title" data-title="${escapeAttr(s.id)}" title="Double-click to rename">${escapeHtml(title)}</div>
+          <div class="history-item-meta"><span>${escapeHtml(when)}</span></div>
+          <div class="history-item-preview">${escapeHtml(prev)}</div>
+        </div>
+        <div class="history-item-delete-strip" aria-hidden="true"><span>Delete</span></div>
       </div>
-      <div class="history-item-title" data-title="${escapeAttr(s.id)}" title="Double-click to rename">${escapeHtml(title)}</div>
-      <div class="history-item-meta"><span>${escapeHtml(when)}</span></div>
-      <div class="history-item-preview">${escapeHtml(prev)}</div>
     </li>`;
   }).join('');
 }
@@ -1308,28 +1468,68 @@ function switchToSession(id) {
   if (messages.length) replayMessages();
   else showWelcome();
   renderHistoryList();
+  if (isMobileNavLayout()) {
+    applyHistoryRailCollapsed(true);
+    if (!sidebar.classList.contains('open')) hideSheetBackdrop();
+    syncBottomNavState();
+  }
 }
 
 historyList?.addEventListener('click', e => {
   const del = e.target.closest('.history-item-del');
   if (del) {
     e.stopPropagation();
-    const id = del.dataset.del;
-    sessions = sessions.filter(s => s.id !== id);
-    void persistSessionsToDisk();
-    if (id === currentSessionId) {
-      currentSessionId = null;
-      messages = [];
-      localStorage.removeItem('cc_current_session');
-      showWelcome();
-    }
-    renderHistoryList();
+    deleteSessionById(del.dataset.del);
     return;
   }
   const li = e.target.closest('.history-item[data-id]');
   if (!li) return;
   switchToSession(li.dataset.id);
 });
+
+// Swipe left on history row to delete (touch / pointer)
+(() => {
+  let ptrId = null;
+  let startX = 0;
+  let startY = 0;
+  let row = null;
+
+  historyList?.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.buttons !== 1) return;
+    const li = e.target.closest('.history-item[data-id]');
+    if (!li || e.target.closest('.history-item-del') || e.target.closest('.history-item-title-input')) return;
+    ptrId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    row = li;
+    try { row.setPointerCapture(ptrId); } catch { /* ignore */ }
+  });
+
+  historyList?.addEventListener('pointermove', e => {
+    if (e.pointerId !== ptrId || !row) return;
+    const dx = e.clientX - startX;
+    const dy = Math.abs(e.clientY - startY);
+    if (dy > 24) return;
+    if (dx < -12) row.classList.add('history-item--swiping');
+  });
+
+  historyList?.addEventListener('pointerup', e => {
+    if (e.pointerId !== ptrId || !row) return;
+    const dx = e.clientX - startX;
+    const dy = Math.abs(e.clientY - startY);
+    try { row.releasePointerCapture(ptrId); } catch { /* ignore */ }
+    row.classList.remove('history-item--swiping');
+    if (dy < 40 && dx < -72) deleteSessionById(row.dataset.id);
+    ptrId = null;
+    row = null;
+  });
+
+  historyList?.addEventListener('pointercancel', () => {
+    if (row) row.classList.remove('history-item--swiping');
+    ptrId = null;
+    row = null;
+  });
+})();
 
 historyList?.addEventListener('keydown', e => {
   const li = e.target.closest('.history-item[data-id]');
@@ -1402,6 +1602,16 @@ historyRailToggle?.addEventListener('click', () => {
   const collapsed = !historyRail.classList.contains('collapsed');
   applyHistoryRailCollapsed(collapsed);
   try { localStorage.setItem('cc_history_rail_collapsed', collapsed ? '1' : '0'); } catch { /* ignore */ }
+  if (isMobileNavLayout()) {
+    if (!collapsed) {
+      sidebar.classList.remove('open');
+      sidebar.classList.add('collapsed');
+      showSheetBackdrop();
+    } else if (!sidebar.classList.contains('open')) {
+      hideSheetBackdrop();
+    }
+    syncBottomNavState();
+  }
 });
 
 headerNewChatBtn?.addEventListener('click', () => newSession());
@@ -1479,7 +1689,11 @@ systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', s
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-init().then(() => { loadFiles(); loadMemory(); });
+init().then(() => {
+  loadFiles();
+  loadMemory();
+  syncBottomNavState();
+});
 // Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
 setInterval(async () => {
   try {
@@ -1490,6 +1704,7 @@ setInterval(async () => {
       if (providers[id]?.configured !== p.configured) changed = true;
     }
     providers = next;
+    saveProvidersCache(providers);
     if (changed) { buildProviderUI(); updateStatus(); }
   } catch { /* ignore */ }
 }, 30_000);
