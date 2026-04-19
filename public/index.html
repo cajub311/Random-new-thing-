@@ -82,9 +82,53 @@
       <input type="range" id="tempRange" min="0" max="2" step="0.1" value="0.7" />
     </div>
 
-    <div class="sidebar-footer">
-      <div id="statusDot" class="status-dot offline"></div>
-      <span id="statusText">Loading providers…</span>
+    <div class="sidebar-footer" id="sidebarFooter">
+      <div id="providerLoadSkeleton" class="provider-load-skeleton" aria-hidden="true">
+        <div class="skeleton-line skeleton-line--long"></div>
+        <div class="skeleton-line skeleton-line--med"></div>
+        <div class="skeleton-line skeleton-line--short"></div>
+        <p class="skeleton-hint" id="providerLoadHint">Discovering local runtimes and cloud fallbacks…</p>
+        <div class="skeleton-progress" role="progressbar" aria-valuetext="Loading providers">
+          <span class="skeleton-progress-bar"></span>
+        </div>
+      </div>
+      <div class="status-block" id="statusBlock">
+        <div class="status-row">
+          <div id="statusDot" class="status-dot offline"></div>
+          <div class="status-copy">
+            <span id="connectivityStatus" class="connectivity-status"></span>
+            <span id="statusText" class="status-text-main"></span>
+          </div>
+        </div>
+        <button type="button" class="setup-ollama-btn" id="setupOllamaBtn" title="Show install commands for Ollama" aria-expanded="false" aria-controls="ollamaSetupPanel">
+          Setup Ollama
+        </button>
+        <div class="ollama-setup-panel" id="ollamaSetupPanel" hidden>
+          <p class="ollama-setup-intro">Run these in a terminal (copy each block):</p>
+          <div class="cmd-block">
+            <div class="cmd-block-head">
+              <span>Install (macOS / Linux)</span>
+              <button type="button" class="copy-cmd-btn" data-copy-target="ollama-install">Copy</button>
+            </div>
+            <pre class="cmd-pre" id="ollama-install">curl -fsSL https://ollama.com/install.sh | sh</pre>
+          </div>
+          <div class="cmd-block">
+            <div class="cmd-block-head">
+              <span>Pull a model (example)</span>
+              <button type="button" class="copy-cmd-btn" data-copy-target="ollama-pull">Copy</button>
+            </div>
+            <pre class="cmd-pre" id="ollama-pull">ollama pull llama3.1</pre>
+          </div>
+          <div class="cmd-block">
+            <div class="cmd-block-head">
+              <span>Start the server</span>
+              <button type="button" class="copy-cmd-btn" data-copy-target="ollama-serve">Copy</button>
+            </div>
+            <pre class="cmd-pre" id="ollama-serve">ollama serve</pre>
+          </div>
+          <p class="ollama-setup-note">Default API URL is <code>http://localhost:11434</code>. After Ollama is running, status updates within about a minute or refresh the page.</p>
+        </div>
+      </div>
     </div>
   </aside>
 

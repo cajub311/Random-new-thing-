@@ -98,6 +98,15 @@ function isProviderUsable(id) {
   return !!(p.envKey && process.env[p.envKey]);
 }
 
+function localEndpointHost(baseUrl) {
+  if (!baseUrl) return null;
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return String(baseUrl).replace(/^https?:\/\//i, '').split('/')[0] || null;
+  }
+}
+
 // ── Route: GET /api/providers ─────────────────────────────────────────────
 app.get('/api/providers', (req, res) => {
   const result = {};
@@ -117,6 +126,7 @@ app.get('/api/providers', (req, res) => {
         : p.keyless || !!(p.envKey && process.env[p.envKey]),
       supportsTools: !!p.supportsTools,
       reachable: p.local ? !!localStatus?.reachable : undefined,
+      endpoint: p.local ? localEndpointHost(p.baseUrl) : null,
     };
   }
   res.json(result);

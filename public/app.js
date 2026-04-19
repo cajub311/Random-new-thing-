@@ -26,6 +26,11 @@ const tempRange      = document.getElementById('tempRange');
 const tempVal        = document.getElementById('tempVal');
 const statusDot      = document.getElementById('statusDot');
 const statusText     = document.getElementById('statusText');
+const sidebarFooter  = document.getElementById('sidebarFooter');
+const providerLoadHint = document.getElementById('providerLoadHint');
+const connectivityStatus = document.getElementById('connectivityStatus');
+const setupOllamaBtn = document.getElementById('setupOllamaBtn');
+const ollamaSetupPanel = document.getElementById('ollamaSetupPanel');
 const messagesEl     = document.getElementById('messages');
 const chatForm       = document.getElementById('chatForm');
 const userInput      = document.getElementById('userInput');
@@ -78,10 +83,38 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+const LOAD_HINTS = [
+  'Probing Ollama and other local APIs…',
+  'Checking Pollinations cloud fallback…',
+  'Almost ready…',
+];
+let loadHintTimer = null;
+
+function setProvidersLoading(loading) {
+  if (!sidebarFooter) return;
+  sidebarFooter.classList.toggle('providers-loading', loading);
+  if (loading) {
+    let i = 0;
+    if (providerLoadHint) {
+      providerLoadHint.textContent = LOAD_HINTS[0];
+      loadHintTimer = window.setInterval(() => {
+        i = (i + 1) % LOAD_HINTS.length;
+        providerLoadHint.textContent = LOAD_HINTS[i];
+      }, 2200);
+    }
+  } else {
+    if (loadHintTimer) {
+      clearInterval(loadHintTimer);
+      loadHintTimer = null;
+    }
+  }
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
   loadSessions();
+  setProvidersLoading(true);
   try {
     const res = await fetch(`${API}/api/providers`);
     providers = await res.json();
@@ -90,6 +123,9 @@ async function init() {
     updateStatus();
   } catch (e) {
     setStatus('error', 'Cannot reach server');
+    if (connectivityStatus) connectivityStatus.textContent = '';
+  } finally {
+    setProvidersLoading(false);
   }
   renderSessions();
 }
@@ -206,7 +242,33 @@ function getAvailableProviders({ toolsOnly = false } = {}) {
 }
 
 // ── Status helpers ─────────────────────────────────────────────────────────
+function firstConnectedLocal() {
+  for (const id of PROVIDER_ORDER) {
+    const p = providers[id];
+    if (!p?.local || !p.configured) continue;
+    return { id, p };
+  }
+  return null;
+}
+
+function updateConnectivityLine() {
+  if (!connectivityStatus) return;
+  const local = firstConnectedLocal();
+  if (local) {
+    const host = local.p.endpoint || 'localhost';
+    const label = local.id === 'ollama' ? 'Ollama' : local.p.name.replace(/\s*\(local\)\s*/i, '').trim() || local.p.name;
+    connectivityStatus.textContent = `🟢 ${label} connected (${host})`;
+    return;
+  }
+  if (providers.pollinations) {
+    connectivityStatus.textContent = '🔄 Using Pollinations cloud fallback';
+    return;
+  }
+  connectivityStatus.textContent = '';
+}
+
 function updateStatus() {
+  updateConnectivityLine();
   const needsTools = chatMode === 'agent';
   const available = getAvailableProviders({ toolsOnly: needsTools });
   if (available.length === 0) {
@@ -1111,6 +1173,31 @@ function loadSettings() {
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
 
+// ── Ollama setup panel (copy commands) ─────────────────────────────────────
+if (setupOllamaBtn && ollamaSetupPanel) {
+  setupOllamaBtn.addEventListener('click', () => {
+    const open = ollamaSetupPanel.hidden;
+    ollamaSetupPanel.hidden = !open;
+    setupOllamaBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+}
+document.addEventListener('click', e => {
+  const btn = e.target.closest?.('.copy-cmd-btn');
+  if (!btn || !ollamaSetupPanel?.contains(btn)) return;
+  const id = btn.dataset.copyTarget;
+  const el = id && document.getElementById(id);
+  const text = el?.textContent?.trim();
+  if (!text) return;
+  const done = () => {
+    const prev = btn.textContent;
+    btn.textContent = 'Copied';
+    window.setTimeout(() => { btn.textContent = prev; }, 1600);
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => {});
+  }
+});
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 init().then(() => { loadFiles(); loadMemory(); });
 // Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
@@ -1121,8 +1208,10 @@ setInterval(async () => {
     let changed = false;
     for (const [id, p] of Object.entries(next)) {
       if (providers[id]?.configured !== p.configured) changed = true;
+      if (providers[id]?.endpoint !== p.endpoint) changed = true;
     }
     providers = next;
     if (changed) { buildProviderUI(); updateStatus(); }
+    else updateConnectivityLine();
   } catch { /* ignore */ }
 }, 30_000);
