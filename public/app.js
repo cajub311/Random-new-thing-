@@ -1,4 +1,4 @@
-/* ── CloudClaw frontend app ──────────────────────────────────────────── */
+/* ── OpenClaw frontend app ──────────────────────────────────────────── */
 
 const API = '';  // same-origin; set full URL if backend is separate
 
@@ -1078,9 +1078,9 @@ sessionsList?.addEventListener('click', e => {
 function exportChat() {
   if (messages.length === 0) return;
   const title = sessionTitle(messages);
-  const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
+  const md = `# ${title}\n\n*Exported from OpenClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
-      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
+      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**OpenClaw**' : `**${m.role}**`;
       return `### ${who}\n\n${m.content}\n`;
     }).join('\n');
   const blob = new Blob([md], { type: 'text/markdown' });
