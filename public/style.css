@@ -94,7 +94,61 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   padding: 12px 20px; border-bottom: 1px solid var(--border);
   background: var(--surface); flex-shrink: 0;
 }
-.topbar-title { flex: 1; font-weight: 600; font-size: 0.95rem; color: var(--text); }
+.topbar-title { flex: 1; font-weight: 600; font-size: 0.95rem; color: var(--text); min-width: 0; }
+
+/* GitHub “view source” — high-visibility CTA (header + footer) */
+.github-source-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  color: #fff;
+  background: linear-gradient(135deg, #238636 0%, #2ea043 45%, #1f6feb 100%);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 4px 18px rgba(46, 160, 67, 0.45),
+    0 0 28px rgba(31, 111, 235, 0.25);
+  transition: transform var(--transition), box-shadow var(--transition), filter var(--transition);
+}
+.github-source-link:hover {
+  color: #fff;
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 6px 22px rgba(46, 160, 67, 0.55),
+    0 0 36px rgba(31, 111, 235, 0.35);
+}
+.github-source-link:focus-visible {
+  outline: 3px solid var(--accent2);
+  outline-offset: 3px;
+}
+.github-source-link .github-icon { flex-shrink: 0; }
+.github-label-short { display: none; }
+.github-label-long { display: inline; }
+.github-source-link--header { margin-left: auto; }
+.github-source-link--footer {
+  font-size: 1rem;
+  padding: 12px 22px;
+}
+
+.site-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surface) 0%, rgba(26, 29, 39, 0.98) 100%);
+}
 
 /* ── Buttons ─────────────────────────────────────────────────────────── */
 .icon-btn {
@@ -227,7 +281,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 #userInput:focus { border-color: var(--accent); }
 #userInput::placeholder { color: var(--text-muted); }
 
-.disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-muted); padding: 4px 20px 10px; }
+.disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-muted); padding: 4px 20px 6px; }
 
 /* ── Mode toggle ─────────────────────────────────────────────────────── */
 .mode-toggle { display: flex; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 6px; }
@@ -269,6 +323,14 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   .sidebar-close { display: inline-flex; }
   .topbar-title { font-size: 0.85rem; }
   .welcome h1 { font-size: 1.4rem; }
+  .github-source-link--header .github-label-long { display: none; }
+  .github-source-link--header .github-label-short { display: inline; }
+  .github-source-link--header {
+    padding: 8px 14px;
+    gap: 8px;
+    font-size: 0.82rem;
+  }
+  .github-source-link--header .github-icon { width: 22px; height: 22px; }
 }
 
 /* ── Agent mode additions ─────────────────────────────────────────────── */
