@@ -1,4 +1,4 @@
-/* ── CloudClaw frontend app ──────────────────────────────────────────── */
+/* ── OpenClaw frontend app ─────────────────────────────────────────────── */
 
 const API = '';  // same-origin; set full URL if backend is separate
 
@@ -14,6 +14,8 @@ let currentSessionId = null;
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
 const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
+
+const SOURCE_REPO = 'cajub311/Random-new-thing-';
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -52,6 +54,8 @@ const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
+const githubSourceLink = document.getElementById('githubSourceLink');
+const githubSourceFloat = document.getElementById('githubSourceFloat');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -92,6 +96,15 @@ async function init() {
     setStatus('error', 'Cannot reach server');
   }
   renderSessions();
+  const ghRepoUrl = `https://github.com/${SOURCE_REPO}`;
+  if (githubSourceLink) {
+    githubSourceLink.href = ghRepoUrl;
+    githubSourceLink.title = 'Source on GitHub';
+  }
+  if (githubSourceFloat) {
+    githubSourceFloat.href = ghRepoUrl;
+    githubSourceFloat.title = 'Source on GitHub';
+  }
 }
 
 function buildProviderUI() {
@@ -1267,9 +1280,9 @@ sessionsList?.addEventListener('click', e => {
 function exportChat() {
   if (messages.length === 0) return;
   const title = sessionTitle(messages);
-  const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
+  const md = `# ${title}\n\n*Exported from OpenClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
-      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
+      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**OpenClaw**' : `**${m.role}**`;
       return `### ${who}\n\n${m.content}\n`;
     }).join('\n');
   const blob = new Blob([md], { type: 'text/markdown' });
@@ -1286,7 +1299,15 @@ function exportChat() {
 // ── Persist settings ───────────────────────────────────────────────────────
 function loadSettings() {
   const sys = localStorage.getItem('cc_system');
-  if (sys) systemPrompt.value = sys;
+  if (sys) {
+    if (/cloudclaw/i.test(sys)) {
+      const migrated = sys.replace(/cloudclaw/gi, 'OpenClaw');
+      systemPrompt.value = migrated;
+      try { localStorage.setItem('cc_system', migrated); } catch {}
+    } else {
+      systemPrompt.value = sys;
+    }
+  }
   const temp = localStorage.getItem('cc_temp');
   if (temp) { tempRange.value = temp; tempVal.textContent = temp; }
   const mode = localStorage.getItem('cc_mode');
