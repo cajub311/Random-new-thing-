@@ -441,7 +441,88 @@ async function streamChat(id, key, msgs, name) {
   }
 }
 
-// ── Agent mode ────────────────────────────────────────────────────────────
+// ── Agent mode (SSE: streamed tokens + live tool UI) ───────────────────────
+function typingDotsHtml() {
+  return `<div class="typing-bubble agent-inline-dots" aria-hidden="true"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>`;
+}
+
+function formatToolArgsForBanner(tool, args) {
+  if (!args || typeof args !== 'object') return '';
+  const q = v => {
+    const s = String(v ?? '');
+    return s.length > 72 ? `${s.slice(0, 72)}…` : s;
+  };
+  if (tool === 'web_search' && args.query != null) return `'${q(args.query)}'`;
+  if (tool === 'fetch_url' && args.url != null) return `'${q(args.url)}'`;
+  if (tool === 'create_file' && args.filename != null) return `'${q(args.filename)}'`;
+  if (tool === 'generate_image' && args.prompt != null) return `'${q(args.prompt)}'`;
+  if (tool === 'draft_email' && args.to != null) return `'${q(args.to)}'`;
+  if (tool === 'calculate' && args.expression != null) return `'${q(args.expression)}'`;
+  if (tool === 'remember' && args.text != null) return `'${q(args.text)}'`;
+  if (tool === 'recall' && args.query != null) return `'${q(args.query)}'`;
+  return '';
+}
+
+function createAgentStreamShell(providerId) {
+  removeWelcome();
+  const div = document.createElement('div');
+  const aid = nextMsgId('msg');
+  const labelId = `${aid}-label`;
+  const bubbleId = `${aid}-bubble`;
+  const name = providers[providerId]?.name || 'AI';
+  div.className = 'message assistant agent-stream-msg';
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-labelledby', labelId);
+  div.setAttribute('aria-busy', 'true');
+  div.innerHTML = `
+    <div class="msg-meta" id="${labelId}">
+      <span class="msg-avatar" aria-hidden="true">🤖</span>
+      <strong>${escapeHtml(name)}</strong>
+      <span class="agent-badge" aria-label="Agent mode">agent</span>
+      <span class="msg-time" aria-hidden="true">${timestamp()}</span>
+    </div>
+    <div class="agent-tool-banner" hidden role="status" aria-live="polite"></div>
+    <div class="agent-live-tools" aria-label="Tool activity"></div>
+    <div class="agent-wait-wrap">${typingDotsHtml()}</div>
+    <div class="msg-bubble agent-stream-bubble streaming" id="${bubbleId}" tabindex="-1" aria-label="Assistant reply"></div>
+    <div class="msg-actions">
+      <button type="button" class="msg-action-btn copy-btn" aria-label="Copy assistant reply">Copy</button>
+    </div>`;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return {
+    root: div,
+    banner: div.querySelector('.agent-tool-banner'),
+    liveTools: div.querySelector('.agent-live-tools'),
+    waitWrap: div.querySelector('.agent-wait-wrap'),
+    bodyEl: div.querySelector('.agent-stream-bubble'),
+  };
+}
+
+function setAgentToolBanner(banner, tool, args) {
+  if (!banner) return;
+  const detail = formatToolArgsForBanner(tool, args);
+  banner.textContent = detail
+    ? `🛠️ Running ${tool} for ${detail}…`
+    : `🛠️ Running ${tool}…`;
+  banner.hidden = false;
+}
+
+function hideAgentToolBanner(banner) {
+  if (!banner) return;
+  banner.hidden = true;
+  banner.textContent = '';
+}
+
+function appendAnimatedToolResult(container, item) {
+  if (!container || item.tool === 'final_answer') return;
+  const wrap = document.createElement('div');
+  wrap.className = 'agent-tool-result';
+  wrap.innerHTML = renderTraceItem(item);
+  container.appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add('agent-tool-result--visible'));
+}
+
 async function sendAgent(msgs) {
   const available = getAvailableProviders({ toolsOnly: true });
   if (available.length === 0) {
@@ -450,12 +531,16 @@ async function sendAgent(msgs) {
   }
   const { id, key } = available[0];
   const name = providers[id].name;
-  const typingId = appendTyping(`${name} (Agent)`);
   currentController = new AbortController();
   setLoading(true, true);
 
+  const shell = createAgentStreamShell(id);
+  const { banner, liveTools, waitWrap, bodyEl } = shell;
+  let buffer = '';
+  let sawDelta = false;
+
   try {
-    const res = await fetch(`${API}/api/agent`, {
+    const res = await fetch(`${API}/api/agent/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -471,29 +556,112 @@ async function sendAgent(msgs) {
       }),
       signal: currentController.signal,
     });
-    const data = await res.json();
-    removeTyping(typingId);
-    if (!res.ok || data.error) {
-      appendMessage('assistant', `Agent error: ${data.error || res.statusText}`, true, id);
+
+    if (!res.ok || !res.body) {
+      let errMsg = `HTTP ${res.status}`;
+      try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
+      shell.root.remove();
+      appendMessage('assistant', `Agent error: ${errMsg}`, true, id);
       setStatus('error', 'Agent failed');
       return;
     }
-    appendAgentMessage(id, data);
-    messages.push({ role: 'assistant', content: data.reply || '' });
-    setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
-    activePill.textContent = `🤖 ${name}`;
-    activePill.className = 'provider-pill online';
-    saveCurrentSession();
-    loadFiles();
-    if (data.trace?.some(t => t.tool === 'remember' && t.result?.id)) loadMemory();
-  } catch (err) {
-    removeTyping(typingId);
-    if (err.name !== 'AbortError') {
-      appendMessage('assistant', `Agent error: ${err.message}`, true);
-      setStatus('error', 'Agent failed');
-    } else {
-      setStatus('online', 'Stopped');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let parseBuf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      parseBuf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = parseBuf.indexOf('\n\n')) >= 0) {
+        const chunk = parseBuf.slice(0, idx);
+        parseBuf = parseBuf.slice(idx + 2);
+        const lines = chunk.split('\n');
+        let event = 'message';
+        let data = '';
+        for (const l of lines) {
+          if (l.startsWith('event:')) event = l.slice(6).trim();
+          else if (l.startsWith('data:')) data += l.slice(5).trim();
+        }
+        if (!data) continue;
+        let obj;
+        try { obj = JSON.parse(data); } catch { continue; }
+
+        if (event === 'delta' && obj.content) {
+          if (!sawDelta) {
+            sawDelta = true;
+            if (waitWrap) waitWrap.innerHTML = '';
+          }
+          buffer += obj.content;
+          bodyEl.innerHTML = renderMarkdown(buffer) + '<span class="cursor" aria-hidden="true">▋</span>';
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (event === 'tool_start') {
+          setAgentToolBanner(banner, obj.tool, obj.args);
+          if (waitWrap && !sawDelta) waitWrap.innerHTML = typingDotsHtml();
+        } else if (event === 'tool_result') {
+          hideAgentToolBanner(banner);
+          if (waitWrap) waitWrap.innerHTML = '';
+          appendAnimatedToolResult(liveTools, {
+            tool: obj.tool,
+            args: obj.args,
+            result: obj.result,
+            step: (liveTools?.children?.length || 0) + 1,
+          });
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (event === 'done') {
+          bodyEl.innerHTML = renderMarkdown(buffer || obj.reply || '');
+          enhanceCodeBlocks(bodyEl);
+          bodyEl.classList.remove('streaming');
+          shell.root.setAttribute('aria-busy', 'false');
+          hideAgentToolBanner(banner);
+          if (waitWrap) waitWrap.innerHTML = '';
+          wireMessageActions(shell.root, buffer || obj.reply || '');
+          messages.push({ role: 'assistant', content: buffer || obj.reply || '' });
+          setStatus('online', `${name} answered (${obj.steps} step${obj.steps === 1 ? '' : 's'})`);
+          activePill.textContent = `🤖 ${name}`;
+          activePill.className = 'provider-pill online';
+          saveCurrentSession();
+          loadFiles();
+          if (obj.trace?.some(t => t.tool === 'remember' && t.result?.id)) loadMemory();
+          return;
+        } else if (event === 'error') {
+          throw new Error(obj.message || 'stream error');
+        }
+      }
     }
+
+    if (buffer && bodyEl) {
+      bodyEl.innerHTML = renderMarkdown(buffer);
+      enhanceCodeBlocks(bodyEl);
+      bodyEl.classList.remove('streaming');
+      shell.root.setAttribute('aria-busy', 'false');
+      hideAgentToolBanner(banner);
+      if (waitWrap) waitWrap.innerHTML = '';
+      wireMessageActions(shell.root, buffer);
+      messages.push({ role: 'assistant', content: buffer });
+      saveCurrentSession();
+      setStatus('online', `${name} responded`);
+      activePill.textContent = `🤖 ${name}`;
+      activePill.className = 'provider-pill online';
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      bodyEl.innerHTML = renderMarkdown(buffer || '_(stopped)_');
+      enhanceCodeBlocks(bodyEl);
+      bodyEl.classList.remove('streaming');
+      shell.root.setAttribute('aria-busy', 'false');
+      hideAgentToolBanner(banner);
+      if (waitWrap) waitWrap.innerHTML = '';
+      wireMessageActions(shell.root, buffer);
+      if (buffer) messages.push({ role: 'assistant', content: buffer });
+      setStatus('online', 'Stopped');
+      return;
+    }
+    shell.root.remove();
+    appendMessage('assistant', `Agent error: ${err.message}`, true, id);
+    setStatus('error', 'Agent failed');
   } finally {
     currentController = null;
     setLoading(false);

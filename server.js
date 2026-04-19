@@ -11,9 +11,9 @@ import { existsSync } from 'fs';
 import 'dotenv/config';
 
 import { PROVIDERS, DEFAULT_ORDER } from './lib/providers.js';
-import { chatCompletion, callOpenAI, probeLocal, clampGenerationOpts } from './lib/llm.js';
+import { chatCompletion, callOpenAI, probeLocal, clampGenerationOpts, streamOpenAIMessage } from './lib/llm.js';
 import { loadSkills } from './skills/index.js';
-import { runAgent, SYSTEM_PROMPT, buildMemoryBrief } from './lib/brain.js';
+import { runAgent, runAgentStream, SYSTEM_PROMPT, buildMemoryBrief } from './lib/brain.js';
 import { createMemory } from './lib/memory.js';
 import { logger, makeRequestId } from './lib/logger.js';
 
@@ -352,6 +352,123 @@ app.post('/api/agent', async (req, res) => {
     req.log.error('agent failed', { err: err.message, provider: providerId });
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Route: POST /api/agent/stream (SSE: tool progress + token deltas) ────
+app.post('/api/agent/stream', async (req, res) => {
+  const {
+    provider: providerId = DEFAULT_ORDER[0],
+    model,
+    messages,
+    apiKey,
+    maxSteps = 8,
+    temperature,
+    max_tokens,
+  } = req.body;
+  const gen = clampGenerationOpts({ temperature, max_tokens });
+
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages array is required' });
+  }
+  let provider;
+  try { provider = resolveProvider(providerId); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+
+  if (!provider.supportsTools) {
+    return res.status(400).json({
+      error: `${provider.name} does not support tool calling. Use a local LLM (Ollama/LM Studio), Pollinations, Groq, or Together.`,
+    });
+  }
+  if (provider.format !== 'openai') {
+    return res.status(400).json({ error: 'Agent streaming requires an OpenAI-compatible provider.' });
+  }
+  const key = getKey(provider, apiKey);
+  if (!provider.keyless && !key) {
+    return res.status(400).json({ error: `No API key for ${provider.name}.` });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const ac = new AbortController();
+  const onClose = () => { try { ac.abort(); } catch {} };
+  req.on('close', onClose);
+  res.on('close', onClose);
+
+  const callOpenAIStream = (p, msgs, m, k, opts) =>
+    streamOpenAIMessage(p, msgs, m, k, { ...opts, signal: ac.signal });
+
+  try {
+    const userSystem = messages.find(m => m.role === 'system')?.content || '';
+    const userMsgs = messages.filter(m => m.role !== 'system');
+    const memoryBrief = await buildMemoryBrief(memory, userMsgs);
+    const systemContent = SYSTEM_PROMPT({
+      memoryBrief,
+      toolNames: Object.keys(skills),
+      currentTime: new Date().toISOString(),
+    }) + (userSystem ? '\n\nAdditional instructions from the user:\n' + userSystem : '');
+
+    const baseMessages = [
+      { role: 'system', content: systemContent },
+      ...userMsgs,
+    ];
+
+    const ctx = {
+      workspaceDir: WORKSPACE_DIR,
+      memory,
+      logger: req.log,
+      requestId: req.id,
+    };
+
+    const result = await runAgentStream({
+      provider,
+      callOpenAIStream,
+      messages: baseMessages,
+      model,
+      apiKey: key,
+      skills,
+      toolDefs: TOOL_DEFS,
+      maxSteps: Math.min(Math.max(1, maxSteps | 0), 12),
+      ctx,
+      temperature: gen.temperature,
+      max_tokens: gen.max_tokens,
+      onStreamDelta: ({ content }) => {
+        if (content) send('delta', { content });
+      },
+      onToolStart: async ({ tool, args }) => {
+        send('tool_start', { tool, args });
+      },
+      onStep: ({ tool, args, result }) => {
+        send('tool_result', { tool, args, result });
+      },
+    });
+
+    req.log.info('agent stream done', { steps: result.steps, provider: providerId });
+    send('done', {
+      reply: result.reply,
+      provider: provider.name,
+      model: model || provider.defaultModel,
+      steps: result.steps,
+      trace: result.trace,
+      truncated: !!result.truncated,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      send('error', { message: 'aborted' });
+    } else {
+      req.log.error('agent stream failed', { err: err.message, provider: providerId });
+      send('error', { message: err.message });
+    }
+  }
+  res.end();
 });
 
 // ── Route: memory inspection ──────────────────────────────────────────────
