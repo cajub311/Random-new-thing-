@@ -58,6 +58,10 @@ const mainTabExplore = document.getElementById('mainTabExplore');
 const chatPanel      = document.getElementById('chatPanel');
 const explorePanel   = document.getElementById('explorePanel');
 const exploreBackToChat = document.getElementById('exploreBackToChat');
+const welcomeModal = document.getElementById('welcomeModal');
+const welcomeModalDismiss = document.getElementById('welcomeModalDismiss');
+
+const WELCOME_MODAL_SEEN_KEY = 'oc_welcome_modal_seen_v1';
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -197,6 +201,49 @@ async function init() {
     setStatus('error', 'Cannot reach server');
   }
   renderSessions();
+}
+
+function setupWelcomeModal() {
+  const dlg = welcomeModal;
+  if (!dlg || typeof dlg.showModal !== 'function') return;
+
+  let seen = false;
+  try { seen = localStorage.getItem(WELCOME_MODAL_SEEN_KEY) === '1'; } catch { /* ignore */ }
+  if (seen) return;
+
+  const afterClose = () => {
+    try { localStorage.setItem(WELCOME_MODAL_SEEN_KEY, '1'); } catch { /* ignore */ }
+    requestAnimationFrame(() => {
+      userInput?.focus();
+    });
+  };
+
+  dlg.addEventListener('close', afterClose, { once: true });
+
+  dlg.addEventListener('click', e => {
+    if (e.target === dlg) dlg.close();
+  });
+
+  welcomeModalDismiss?.addEventListener('click', () => dlg.close());
+
+  dlg.querySelector('.welcome-modal-cards')?.addEventListener('click', e => {
+    const card = e.target.closest('[data-welcome-prompt]');
+    if (!card) return;
+    const prompt = card.getAttribute('data-welcome-prompt') || '';
+    setMainTab('chat');
+    setChatMode('agent');
+    userInput.value = prompt;
+    userInput.style.height = 'auto';
+    userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
+    userInput.dispatchEvent(new Event('input', { bubbles: true }));
+    dlg.close();
+  });
+
+  try {
+    dlg.showModal();
+  } catch {
+    afterClose();
+  }
 }
 
 function buildProviderUI() {
@@ -1453,7 +1500,11 @@ systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', s
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-init().then(() => { loadFiles(); loadMemory(); });
+init().then(() => {
+  loadFiles();
+  loadMemory();
+  setupWelcomeModal();
+});
 // Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
 setInterval(async () => {
   try {

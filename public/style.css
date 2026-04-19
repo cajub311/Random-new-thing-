@@ -853,3 +853,83 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 
 .memory-list::-webkit-scrollbar { width: 6px; }
 .memory-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── One-time welcome modal ─────────────────────────────────────────────── */
+.welcome-modal {
+  max-width: 440px;
+  width: calc(100vw - 32px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+.welcome-modal::backdrop {
+  background: rgba(5, 8, 18, 0.72);
+  backdrop-filter: blur(4px);
+}
+.welcome-modal-inner {
+  padding: 22px 22px 20px;
+}
+.welcome-modal-title {
+  font-size: 1.12rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text);
+  margin: 0 0 8px;
+  letter-spacing: -0.02em;
+}
+.welcome-modal-sub {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0 0 16px;
+  line-height: 1.45;
+}
+.welcome-modal-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.welcome-modal-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition), transform 0.15s ease;
+}
+.welcome-modal-card:hover {
+  border-color: var(--accent);
+  background: rgba(108, 99, 255, 0.1);
+}
+.welcome-modal-card:active {
+  transform: scale(0.99);
+}
+.welcome-modal-card-label {
+  display: block;
+}
+.welcome-modal-dismiss {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--transition), filter var(--transition);
+}
+.welcome-modal-dismiss:hover {
+  filter: brightness(1.08);
+}

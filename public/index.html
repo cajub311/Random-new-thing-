@@ -198,6 +198,28 @@
     </div>
   </main>
 
+  <dialog id="welcomeModal" class="welcome-modal" aria-labelledby="welcomeModalTitle">
+    <div class="welcome-modal-inner">
+      <h2 id="welcomeModalTitle" class="welcome-modal-title">Welcome to OpenClaw — your private AI assistant</h2>
+      <p class="welcome-modal-sub">Pick a starter prompt or close to begin chatting.</p>
+      <div class="welcome-modal-cards">
+        <button type="button" class="welcome-modal-card" data-welcome-prompt="Search the web for the latest AI news and summarize">
+          <span class="welcome-modal-card-label">Search the web for the latest AI news and summarize</span>
+        </button>
+        <button type="button" class="welcome-modal-card" data-welcome-prompt="Generate an image of a futuristic cyberpunk city">
+          <span class="welcome-modal-card-label">Generate an image of a futuristic cyberpunk city</span>
+        </button>
+        <button type="button" class="welcome-modal-card" data-welcome-prompt="Create and save a todo list file for me">
+          <span class="welcome-modal-card-label">Create and save a todo list file for me</span>
+        </button>
+        <button type="button" class="welcome-modal-card" data-welcome-prompt="Help me decide what to cook for dinner">
+          <span class="welcome-modal-card-label">Help me decide what to cook for dinner</span>
+        </button>
+      </div>
+      <button type="button" class="welcome-modal-dismiss" id="welcomeModalDismiss">Get started</button>
+    </div>
+  </dialog>
+
   <script src="app.js"></script>
 </body>
 </html>
