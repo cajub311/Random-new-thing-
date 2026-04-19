@@ -11,6 +11,10 @@ let pendingFileText = null;
 let currentController = null;    // AbortController for in-flight requests
 let sessions    = [];            // [{id, title, mode, messages, updated}]
 let currentSessionId = null;
+let pendingSessionReplay = false; // replay after providers load (correct assistant labels)
+
+// Public repo for “recent work on GitHub” (source + issues/PRs).
+const SOURCE_REPO = 'cajub311/Random-new-thing-';
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
 const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
@@ -52,6 +56,7 @@ const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
+const githubSourceLink = document.getElementById('githubSourceLink');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -87,11 +92,15 @@ async function init() {
     providers = await res.json();
     buildProviderUI();
     restoreProvider();
-    updateStatus();
   } catch (e) {
     setStatus('error', 'Cannot reach server');
   }
+  finishSessionUiAfterProviders();
   renderSessions();
+  if (githubSourceLink) {
+    githubSourceLink.href = `https://github.com/${SOURCE_REPO}/commits`;
+    githubSourceLink.title = 'Recent commits on GitHub';
+  }
 }
 
 function buildProviderUI() {
@@ -179,12 +188,15 @@ modeToggle.addEventListener('click', e => {
   if (!btn) return;
   setChatMode(btn.dataset.mode);
 });
+function applyChatModeToUI(persistToStorage = true) {
+  modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === chatMode));
+  modeHint.textContent = MODE_HINTS[chatMode] || '';
+  if (persistToStorage) localStorage.setItem('cc_mode', chatMode);
+}
 function setChatMode(mode) {
   chatMode = mode;
-  modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-  modeHint.textContent = MODE_HINTS[mode] || '';
+  applyChatModeToUI(true);
   updateStatus();
-  localStorage.setItem('cc_mode', mode);
   if (mode === 'agent') loadFiles();
 }
 
@@ -492,6 +504,7 @@ chatForm.addEventListener('submit', async e => {
 
   userInput.value = '';
   userInput.style.height = 'auto';
+  persistComposerDraft();
   removeWelcome();
   appendMessage('user', text);
   messages.push({ role: 'user', content: text });
@@ -521,7 +534,17 @@ function handleSlashCommand(text) {
   const cmd = raw.toLowerCase();
   const arg = rest.join(' ').trim();
   switch (cmd) {
-    case '/clear':  messages = []; showWelcome(); saveCurrentSession(); return true;
+    case '/clear': {
+      messages = [];
+      if (currentSessionId) try { localStorage.removeItem('cc_session_draft_' + currentSessionId); } catch {}
+      if (userInput) {
+        userInput.value = '';
+        userInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      showWelcome();
+      saveCurrentSession();
+      return true;
+    }
     case '/new':    newSession(); return true;
     case '/export': exportChat(); return true;
     case '/chat':   setChatMode('auto'); return true;
@@ -566,6 +589,7 @@ userInput.addEventListener('input', () => {
     }
   }
   slashMenu.hidden = true;
+  persistComposerDraft();
 });
 
 slashMenu.addEventListener('click', e => {
@@ -579,6 +603,25 @@ slashMenu.addEventListener('click', e => {
   }
 });
 
+let scrollPersistTimer = null;
+messagesEl.addEventListener('scroll', () => {
+  if (!currentSessionId) return;
+  clearTimeout(scrollPersistTimer);
+  scrollPersistTimer = setTimeout(() => saveScrollForSession(currentSessionId, messagesEl.scrollTop), 200);
+}, { passive: true });
+
+userInput.addEventListener('blur', persistComposerDraft);
+window.addEventListener('beforeunload', () => {
+  persistComposerDraft();
+  if (currentSessionId && messagesEl) saveScrollForSession(currentSessionId, messagesEl.scrollTop);
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    persistComposerDraft();
+    if (currentSessionId && messagesEl) saveScrollForSession(currentSessionId, messagesEl.scrollTop);
+  }
+});
+
 // ── UI controls ────────────────────────────────────────────────────────────
 toggleKeyBtn.addEventListener('click', () => {
   apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
@@ -586,7 +629,16 @@ toggleKeyBtn.addEventListener('click', () => {
 
 tempRange.addEventListener('input', () => tempVal.textContent = tempRange.value);
 
-clearBtn.addEventListener('click', () => { messages = []; showWelcome(); saveCurrentSession(); });
+clearBtn.addEventListener('click', () => {
+  messages = [];
+  if (currentSessionId) try { localStorage.removeItem('cc_session_draft_' + currentSessionId); } catch {}
+  if (userInput) {
+    userInput.value = '';
+    userInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  showWelcome();
+  saveCurrentSession();
+});
 newChatBtn.addEventListener('click', () => newSession());
 
 sidebarToggle.addEventListener('click', () => {
@@ -676,6 +728,60 @@ function refreshSyncStatus() {
   setSyncStatus(GH.auto ? 'auto-sync on' : 'manual', 'on');
 }
 
+const MSG_SCROLL_MAP_KEY = 'cc_msg_scroll_map';
+
+function loadScrollMap() {
+  try {
+    const raw = localStorage.getItem(MSG_SCROLL_MAP_KEY);
+    if (!raw) return {};
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? o : {};
+  } catch { return {}; }
+}
+
+function saveScrollForSession(id, top) {
+  if (!id || !messagesEl) return;
+  const map = loadScrollMap();
+  map[id] = top;
+  try { localStorage.setItem(MSG_SCROLL_MAP_KEY, JSON.stringify(map)); } catch {}
+}
+
+function restoreScrollForSession(id) {
+  if (!id || !messagesEl) return;
+  const map = loadScrollMap();
+  const top = map[id];
+  if (typeof top === 'number' && !Number.isNaN(top)) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { messagesEl.scrollTop = top; });
+    });
+  }
+}
+
+function persistComposerDraft() {
+  if (!userInput) return;
+  const v = userInput.value;
+  if (currentSessionId) {
+    if (v) try { localStorage.setItem('cc_session_draft_' + currentSessionId, v); } catch {}
+    else try { localStorage.removeItem('cc_session_draft_' + currentSessionId); } catch {}
+  } else {
+    if (v) try { localStorage.setItem('cc_composer_draft', v); } catch {}
+    else try { localStorage.removeItem('cc_composer_draft'); } catch {}
+  }
+}
+
+function restoreComposerDraftForSession(id) {
+  if (!userInput) return;
+  let v = '';
+  if (id) {
+    try { v = localStorage.getItem('cc_session_draft_' + id) || ''; } catch { v = ''; }
+  }
+  if (!v) {
+    try { v = localStorage.getItem('cc_composer_draft') || ''; } catch { v = ''; }
+  }
+  userInput.value = v;
+  userInput.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 if (ghTokenInput) {
   ghTokenInput.value = GH.token;
   ghTokenInput.addEventListener('input', () => { GH.token = ghTokenInput.value.trim(); refreshSyncStatus(); });
@@ -701,14 +807,33 @@ async function ghCall(path, opts = {}) {
   return res.json();
 }
 
+function collectSessionDraftKeys() {
+  const out = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('cc_session_draft_')) {
+        const id = k.slice('cc_session_draft_'.length);
+        const v = localStorage.getItem(k);
+        if (v) out[id] = v;
+      }
+    }
+  } catch { /* ignore */ }
+  return out;
+}
+
 function snapshot() {
   let mem = [];
   try { mem = JSON.parse(localStorage.getItem('cc_memory') || '[]'); } catch {}
   return {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     sessions,
     memory: mem,
+    currentSessionId: currentSessionId || localStorage.getItem('cc_current_session') || '',
+    messageScrollBySession: loadScrollMap(),
+    composerDraftsBySession: collectSessionDraftKeys(),
+    orphanComposerDraft: localStorage.getItem('cc_composer_draft') || '',
     settings: {
       provider: localStorage.getItem('cc_provider') || '',
       mode: localStorage.getItem('cc_mode') || 'auto',
@@ -751,6 +876,22 @@ async function pullSnapshot() {
       try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
       renderSessions();
     }
+    if (snap.currentSessionId && sessions.some(s => s.id === snap.currentSessionId)) {
+      currentSessionId = snap.currentSessionId;
+      try { localStorage.setItem('cc_current_session', currentSessionId); } catch {}
+    }
+    if (snap.messageScrollBySession && typeof snap.messageScrollBySession === 'object') {
+      const merged = { ...loadScrollMap(), ...snap.messageScrollBySession };
+      try { localStorage.setItem(MSG_SCROLL_MAP_KEY, JSON.stringify(merged)); } catch {}
+    }
+    if (snap.composerDraftsBySession && typeof snap.composerDraftsBySession === 'object') {
+      for (const [id, text] of Object.entries(snap.composerDraftsBySession)) {
+        if (typeof text === 'string' && text) try { localStorage.setItem('cc_session_draft_' + id, text); } catch {}
+      }
+    }
+    if (typeof snap.orphanComposerDraft === 'string' && snap.orphanComposerDraft) {
+      try { localStorage.setItem('cc_composer_draft', snap.orphanComposerDraft); } catch {}
+    }
     if (Array.isArray(snap.memory)) {
       try { localStorage.setItem('cc_memory', JSON.stringify(snap.memory)); } catch {}
       // Re-upload to server so the agent can recall.
@@ -762,6 +903,9 @@ async function pullSnapshot() {
       }
       loadMemory();
     }
+    loadSessions();
+    finishSessionUiAfterProviders();
+    renderSessions();
     setSyncStatus('pulled', 'on');
   } catch (e) {
     setSyncStatus('pull failed', 'warn');
@@ -1170,14 +1314,45 @@ function loadSessions() {
     if (mostRecent) currentSessionId = mostRecent.id;
   }
 
+  pendingSessionReplay = false;
   if (currentSessionId) {
     const s = sessions.find(s => s.id === currentSessionId);
     if (s) {
       messages = s.messages || [];
       chatMode = s.mode || 'auto';
-      if (messages.length) replayMessages();
+      if (messages.length) pendingSessionReplay = true;
       localStorage.setItem('cc_current_session', currentSessionId);
+    } else {
+      currentSessionId = null;
+      messages = [];
+      try { localStorage.removeItem('cc_current_session'); } catch {}
+      if (sessions.length) {
+        const mostRecent = [...sessions].sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
+        if (mostRecent) {
+          currentSessionId = mostRecent.id;
+          messages = mostRecent.messages || [];
+          chatMode = mostRecent.mode || 'auto';
+          if (messages.length) pendingSessionReplay = true;
+          try { localStorage.setItem('cc_current_session', currentSessionId); } catch {}
+        }
+      }
     }
+  }
+}
+
+/** After providers + UI are ready: replay saved chat with correct labels, sync mode, restore draft & scroll. */
+function finishSessionUiAfterProviders() {
+  if (pendingSessionReplay && messages.length) {
+    replayMessages();
+    pendingSessionReplay = false;
+  }
+  applyChatModeToUI(false);
+  updateStatus();
+  if (currentSessionId) {
+    restoreComposerDraftForSession(currentSessionId);
+    restoreScrollForSession(currentSessionId);
+  } else {
+    restoreComposerDraftForSession(null);
   }
 }
 
@@ -1194,6 +1369,12 @@ function newSession() {
   messages = [];
   currentSessionId = null;
   localStorage.removeItem('cc_current_session');
+  pendingSessionReplay = false;
+  if (userInput) {
+    userInput.value = '';
+    userInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  try { localStorage.removeItem('cc_composer_draft'); } catch {}
   showWelcome();
   renderSessions();
 }
@@ -1261,6 +1442,8 @@ sessionsList?.addEventListener('click', e => {
   setChatMode(chatMode);
   localStorage.setItem('cc_current_session', currentSessionId);
   replayMessages();
+  restoreComposerDraftForSession(currentSessionId);
+  restoreScrollForSession(currentSessionId);
   renderSessions();
 });
 
@@ -1292,8 +1475,7 @@ function loadSettings() {
   const mode = localStorage.getItem('cc_mode');
   if (mode && ['auto', 'agent', 'ask-all'].includes(mode)) {
     chatMode = mode;
-    modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-    modeHint.textContent = MODE_HINTS[mode] || '';
+    applyChatModeToUI(false);
   }
 }
 
