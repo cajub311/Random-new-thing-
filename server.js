@@ -314,6 +314,127 @@ app.post('/api/agent', async (req, res) => {
   }
 });
 
+// ── Route: POST /api/agent/stream (SSE: thinking, tool results, final JSON) ─
+app.post('/api/agent/stream', async (req, res) => {
+  const { provider: providerId = DEFAULT_ORDER[0], model, messages, apiKey, maxSteps = 8 } = req.body;
+
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages array is required' });
+  }
+  let provider;
+  try { provider = resolveProvider(providerId); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+
+  if (!provider.supportsTools) {
+    return res.status(400).json({
+      error: `${provider.name} does not support tool calling. Use a local LLM (Ollama/LM Studio), Pollinations, Groq, or Together.`,
+    });
+  }
+  const key = getKey(provider, apiKey);
+  if (!provider.keyless && !key) {
+    return res.status(400).json({ error: `No API key for ${provider.name}.` });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  /** Shrink huge `final_answer` payloads for the live thinking banner only. */
+  const thinkingToolPayload = (tool, args) => {
+    if (tool === 'final_answer' && args && typeof args.answer === 'string') {
+      const a = args.answer;
+      const max = 320;
+      return {
+        tool,
+        args: { answer: a.length > max ? `${a.slice(0, max)}…` : a },
+        answerTruncated: a.length > max,
+      };
+    }
+    return { tool, args };
+  };
+
+  let closed = false;
+  req.on('close', () => { closed = true; });
+
+  try {
+    const userSystem = messages.find(m => m.role === 'system')?.content || '';
+    const userMsgs = messages.filter(m => m.role !== 'system');
+
+    const memoryBrief = await buildMemoryBrief(memory, userMsgs);
+    const systemContent = SYSTEM_PROMPT({
+      memoryBrief,
+      toolNames: Object.keys(skills),
+      currentTime: new Date().toISOString(),
+    }) + (userSystem ? '\n\nAdditional instructions from the user:\n' + userSystem : '');
+
+    const baseMessages = [
+      { role: 'system', content: systemContent },
+      ...userMsgs,
+    ];
+
+    const ctx = {
+      workspaceDir: WORKSPACE_DIR,
+      memory,
+      logger: req.log,
+      requestId: req.id,
+    };
+
+    send('agent_started', {
+      provider: provider.name,
+      model: model || provider.defaultModel,
+    });
+
+    const result = await runAgent({
+      provider,
+      callOpenAI,
+      messages: baseMessages,
+      model,
+      apiKey: key,
+      skills,
+      toolDefs: TOOL_DEFS,
+      maxSteps: Math.min(Math.max(1, maxSteps | 0), 12),
+      ctx,
+      onBeforeLLM: ({ step, wrapUp }) => {
+        if (!closed) send('thinking_llm', { step, wrapUp: !!wrapUp });
+      },
+      onBeforeTool: ({ step, tool, args, rawArguments }) => {
+        if (closed) return;
+        send('thinking_tool', {
+          step,
+          ...thinkingToolPayload(tool, args),
+          rawArguments: typeof rawArguments === 'string' ? rawArguments : undefined,
+        });
+      },
+      onStep: (ev) => {
+        if (!closed) send('tool_result', ev);
+      },
+    });
+
+    if (closed) return res.end();
+
+    req.log.info('agent stream done', { steps: result.steps, provider: providerId });
+    send('done', {
+      reply: result.reply,
+      provider: provider.name,
+      model: model || provider.defaultModel,
+      steps: result.steps,
+      trace: result.trace,
+      truncated: !!result.truncated,
+    });
+  } catch (err) {
+    if (!closed) send('error', { message: err.message });
+    req.log.error('agent stream failed', { err: err.message, provider: providerId });
+  }
+  res.end();
+});
+
 // ── Route: memory inspection ──────────────────────────────────────────────
 app.get('/api/memory', async (req, res) => {
   const list = await memory.list({ limit: 200 });
@@ -382,6 +503,7 @@ app.get('/api/health', (_req, res) => {
     configuredProviders: configured,
     skillCount: Object.keys(skills).length,
     skills: Object.keys(skills),
+    endpoints: ['/api/chat', '/api/chat/stream', '/api/agent', '/api/agent/stream'],
   });
 });
 
