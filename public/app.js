@@ -12,8 +12,11 @@ let currentController = null;    // AbortController for in-flight requests
 let sessions    = [];            // [{id, title, mode, messages, updated}]
 let currentSessionId = null;
 
-// Local LLMs first, then keyless cloud, then key-based cloud.
-const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
+// Keyless cloud first, then key-based cloud (sidebar key or server env).
+const PROVIDER_ORDER = [
+  'pollinations',
+  'groq', 'cerebras', 'openrouter', 'gemini', 'together', 'deepseek', 'cohere', 'huggingface',
+];
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -157,7 +160,11 @@ function buildProviderUI() {
 }
 
 function restoreProvider() {
-  const saved = localStorage.getItem('cc_provider');
+  let saved = localStorage.getItem('cc_provider');
+  if (saved && !providers[saved]) {
+    localStorage.removeItem('cc_provider');
+    saved = null;
+  }
   const firstAvailable = getAvailableProviders()[0]?.id;
   const target = (saved && providers[saved]) ? saved : (firstAvailable || Object.keys(providers)[0]);
   if (target) providerSelect.value = target;
@@ -231,7 +238,11 @@ function getAvailableProviders({ toolsOnly = false } = {}) {
     .filter(id => !toolsOnly || providers[id].supportsTools)
     .map(id => {
       const p = providers[id];
-      if (p.keyless) return { id, key: '' };
+      if (p.keyless) {
+        // Keyless cloud (e.g. Pollinations): always usable. Skip removed local stacks.
+        if (p.local) return null;
+        return { id, key: '' };
+      }
       const key = localStorage.getItem(`cc_key_${id}`) || '';
       if (key || p.configured) return { id, key };
       return null;
@@ -862,7 +873,7 @@ function showWelcome() {
     <div class="welcome">
       <div class="welcome-icon">🐾</div>
       <h1>OpenClaw</h1>
-      <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
+      <p>Free, open-source AI assistant. Uses the keyless Pollinations cloud by default; add API keys (e.g. Groq) for faster models.</p>
       <div data-trust-strip></div>
       <div class="provider-cards" id="providerCardsWelcome"></div>
       <div class="quick-prompts">
@@ -873,7 +884,7 @@ function showWelcome() {
         <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
         <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
       </div>
-      <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
+      <p class="tip"><strong>🎉 No API key required</strong> to start — Pollinations works out of the box. Paste a Groq key in the sidebar for much faster chat and agent runs. Type <code>/help</code> for commands.</p>
     </div>`;
   fillTrustStripSlots(messagesEl);
   const cards = document.getElementById('providerCardsWelcome');
@@ -1338,7 +1349,7 @@ tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRa
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 init().then(() => { loadFiles(); loadMemory(); });
-// Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
+// Refresh provider status periodically (e.g. env keys on the server).
 setInterval(async () => {
   try {
     const res = await fetch(`${API}/api/providers`);

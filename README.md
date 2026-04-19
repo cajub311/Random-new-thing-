@@ -1,22 +1,21 @@
 # 🐾 OpenClaw
 
-**Free, local-first, open-source personal AI assistant.**
-Runs on your own machine with Ollama or LM Studio. Falls back to keyless
-cloud providers so it Just Works even if you haven't installed anything.
+**Free, open-source personal AI assistant.**
+Uses a keyless cloud model by default (Pollinations) and supports optional
+API keys (Groq, Gemini, Together, …) for faster or private-to-vendor use.
 Talks to a real agent that can search the web, create files, draft emails,
 generate images, do math, and remember things about you.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-6c63ff.svg)](LICENSE)
 [![Node.js: ≥18](https://img.shields.io/badge/node-%E2%89%A518-339933.svg)](https://nodejs.org)
-[![Local-first](https://img.shields.io/badge/local--first-ollama%20%7C%20lm%20studio-22c55e.svg)](https://ollama.com)
+[![Cloud + keys](https://img.shields.io/badge/cloud-pollinations%20%7C%20groq-6c63ff.svg)](https://console.groq.com)
 
 ---
 
 ## ✨ Why OpenClaw
 
-- **100% free to run.** No paid API required. If you have Ollama or LM Studio,
-  OpenClaw uses *your own* LLM — private, offline, unlimited. If you don't,
-  it falls back to a free keyless cloud provider.
+- **100% free to start.** No paid API required for the default keyless cloud
+  path. Add free-tier keys in the UI when you want faster models.
 - **Smart agent brain.** ReAct-style system prompt, explicit planning, a
   `final_answer` tool for clean termination, and long-term memory so it
   remembers your name, preferences, and ongoing projects across sessions.
@@ -44,27 +43,16 @@ npm start
 # open http://localhost:3000
 ```
 
-That's it — no `.env` needed. OpenClaw will:
+That's it — no `.env` needed. OpenClaw uses the free keyless **Pollinations**
+provider so you can start chatting immediately. Paste a **Groq** API key in
+the sidebar (stored in your browser) for much faster chat and agent mode.
 
-1. Probe `localhost:11434` for **Ollama** and `localhost:1234` for **LM Studio**
-   and auto-connect if it finds one.
-2. If neither is running, use the free keyless **Pollinations** cloud
-   provider so you can still start chatting.
+### Faster models (Groq, etc.)
 
-### Running a truly local stack
-
-Install Ollama and pull a tool-capable model:
-
-```bash
-# macOS / Linux
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llama3.1          # 4.7GB, great all-rounder
-# or
-ollama pull qwen2.5:7b        # excellent tool-calling in ≤ 8GB RAM
-```
-
-Start OpenClaw — it will list the model you pulled in the sidebar and use
-it for everything, including agent mode, with zero internet round-trips.
+Create a key at [console.groq.com](https://console.groq.com), paste it under
+**API Key** in the sidebar, pick **Groq** as the preferred provider, and
+choose a model. The key never leaves your browser unless you deploy with
+server-side env vars.
 
 ---
 
@@ -85,7 +73,7 @@ it for everything, including agent mode, with zero internet round-trips.
         ┌─────────────────────────────┐
         │  lib/brain.js               │   System prompt, tool loop, reflection
         │  lib/llm.js                 │   OpenAI / Gemini / Cohere / HF adapters
-        │  lib/providers.js           │   Registry with local-first priority
+        │  lib/providers.js           │   Provider registry + default order
         │  lib/memory.js              │   Long-term memory (BM25-ish on JSON)
         │  lib/safe-fetch.js          │   SSRF-blocking fetch wrapper
         │  lib/logger.js              │   Structured logger w/ request IDs
@@ -95,13 +83,13 @@ it for everything, including agent mode, with zero internet round-trips.
        ▼                             ▼
   ┌─────────────────┐         ┌─────────────────────┐
   │  skills/*.js    │         │  LLM backends       │
-  │  auto-loaded    │         │  • Ollama (local)   │
-  │  tools          │         │  • LM Studio (local)│
-  │                 │         │  • llama.cpp (local)│
-  │ web_search      │         │  • Pollinations     │
-  │ fetch_url       │         │  • Groq / Gemini /  │
-  │ create_file     │         │    Together / HF /  │
-  │ read_file       │         │    Cohere           │
+  │  auto-loaded    │         │  • Pollinations     │
+  │  tools          │         │    (keyless)        │
+  │                 │         │                     │
+  │ web_search      │         │  • Groq / Gemini /  │
+  │ fetch_url       │         │    Together / HF /  │
+  │ create_file     │         │    Cohere / …       │
+  │ read_file       │         │                     │
   │ draft_email     │         └─────────────────────┘
   │ generate_image  │
   │ calculate       │
@@ -138,9 +126,6 @@ Adding a new skill is a single file. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 | Provider | Local? | Key? | Tools? | Notes |
 |---|:---:|:---:|:---:|---|
-| **Ollama**            | ✅ | — | ✅ | Auto-detected on localhost:11434 |
-| **LM Studio**         | ✅ | — | ✅ | Auto-detected on localhost:1234 |
-| **llama.cpp server**  | ✅ | — | ✅ | `LLAMACPP_URL` defaults to :8080 |
 | **Pollinations**      | — | — | ✅ | Keyless cloud, default fallback |
 | **Groq**              | — | ✅ | ✅ | Fastest Llama inference |
 | **Google Gemini**     | — | ✅ | — | Generous free tier |
@@ -174,7 +159,7 @@ markdown answer. Every step is visible in the tool-call trace UI.
 
 ```
 GET    /api/health          → version, skills, configured providers
-GET    /api/providers       → provider catalog (incl. local reachability)
+GET    /api/providers       → provider catalog
 POST   /api/chat            → one-shot chat completion
 POST   /api/chat/stream     → SSE token streaming
 POST   /api/agent           → tool-calling loop (memory-aware)
@@ -244,8 +229,8 @@ with `npm ci && npm start`.)
 
 ## 🗺 Roadmap ideas
 
-- Vector memory via `nomic-embed-text` through Ollama (drop-in replacement
-  for the BM25 retriever in `lib/memory.js`).
+- Vector memory via embeddings API (drop-in replacement for the BM25
+  retriever in `lib/memory.js`).
 - Additional adapters: Discord, Slack, WhatsApp (Baileys), Signal, Matrix.
 - Voice I/O with Whisper.cpp + Piper, both free and local.
 - A proper plugin registry (ClawHub-style).

@@ -11,7 +11,7 @@ import { existsSync } from 'fs';
 import 'dotenv/config';
 
 import { PROVIDERS, DEFAULT_ORDER } from './lib/providers.js';
-import { chatCompletion, callOpenAI, probeLocal } from './lib/llm.js';
+import { chatCompletion, callOpenAI } from './lib/llm.js';
 import { loadSkills } from './skills/index.js';
 import { runAgent, SYSTEM_PROMPT, buildMemoryBrief } from './lib/brain.js';
 import { createMemory } from './lib/memory.js';
@@ -59,25 +59,6 @@ const memory = createMemory({ dir: WORKSPACE_DIR });
 const { skills, defs: TOOL_DEFS } = await loadSkills();
 logger.info('skills loaded', { count: Object.keys(skills).length, names: Object.keys(skills) });
 
-// Local-provider auto-detection: we probe once at boot and every 60s.
-let LOCAL_STATUS = {};  // providerId -> { reachable, models }
-async function refreshLocalStatus() {
-  for (const id of Object.keys(PROVIDERS)) {
-    const p = PROVIDERS[id];
-    if (!p.local) continue;
-    const status = await probeLocal(p);
-    LOCAL_STATUS[id] = status;
-    if (status.reachable && status.models?.length) {
-      PROVIDERS[id].models = status.models;
-      if (!PROVIDERS[id].models.includes(PROVIDERS[id].defaultModel) && status.models[0]) {
-        PROVIDERS[id].defaultModel = status.models[0];
-      }
-    }
-  }
-}
-refreshLocalStatus().catch(() => {});
-setInterval(() => refreshLocalStatus().catch(() => {}), 60_000).unref?.();
-
 // ── Helpers ────────────────────────────────────────────────────────────────
 function resolveProvider(id) {
   const p = PROVIDERS[id];
@@ -93,7 +74,7 @@ function getKey(provider, apiKey) {
 function isProviderUsable(id) {
   const p = PROVIDERS[id];
   if (!p) return false;
-  if (p.local) return !!LOCAL_STATUS[id]?.reachable;
+  if (p.local) return false;
   if (p.keyless) return true;
   return !!(p.envKey && process.env[p.envKey]);
 }
@@ -102,7 +83,6 @@ function isProviderUsable(id) {
 app.get('/api/providers', (req, res) => {
   const result = {};
   for (const [id, p] of Object.entries(PROVIDERS)) {
-    const localStatus = LOCAL_STATUS[id];
     result[id] = {
       name: p.name,
       description: p.description,
@@ -112,11 +92,8 @@ app.get('/api/providers', (req, res) => {
       local: !!p.local,
       keyless: !!p.keyless,
       signupUrl: p.signupUrl,
-      configured: p.local
-        ? !!localStatus?.reachable
-        : p.keyless || !!(p.envKey && process.env[p.envKey]),
+      configured: p.keyless || !!(p.envKey && process.env[p.envKey]),
       supportsTools: !!p.supportsTools,
-      reachable: p.local ? !!localStatus?.reachable : undefined,
     };
   }
   res.json(result);
@@ -276,7 +253,7 @@ app.post('/api/agent', async (req, res) => {
 
   if (!provider.supportsTools) {
     return res.status(400).json({
-      error: `${provider.name} does not support tool calling. Use a local LLM (Ollama/LM Studio), Pollinations, Groq, or Together.`,
+      error: `${provider.name} does not support tool calling. Use Pollinations, Groq, Together, or another tool-capable provider.`,
     });
   }
   const key = getKey(provider, apiKey);
