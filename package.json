@@ -1,7 +1,7 @@
 {
   "name": "openclaw",
   "version": "3.0.0",
-  "description": "OpenClaw — free, local-first, open-source personal AI assistant. Runs on Ollama/LM Studio with free cloud fallbacks, agent tools (web, files, email, images, math, memory), Telegram adapter.",
+  "description": "Chat, search, generate images and files with Ollama or free cloud. No API key. Fully private.",
   "main": "server.js",
   "type": "module",
   "scripts": {
