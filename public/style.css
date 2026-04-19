@@ -257,6 +257,13 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   color: var(--text-muted); flex-shrink: 0;
 }
 .provider-pill.online { border-color: var(--success); color: var(--success); }
+.provider-pill[data-skip-provider-id] {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+.provider-pill[data-skip-provider-id]:active { opacity: 0.85; }
 
 .header-provider-select {
   max-width: 140px;

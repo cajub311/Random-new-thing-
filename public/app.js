@@ -11,6 +11,7 @@ let pendingFileText = null;
 let currentController = null;    // AbortController for in-flight requests
 let sessions    = [];            // [{id, title, mode, messages, updated}]
 let currentSessionId = null;
+let lastFailedProviderId = null; // last backend that errored — status pill / “Turn off” targets this
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
 const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
@@ -277,6 +278,36 @@ resetProviderSkips?.addEventListener('click', () => {
   updateStatus();
 });
 
+function skipProviderAndSwitchToNext(id) {
+  if (!id || !providers[id]) return;
+  lastFailedProviderId = null;
+  toggleProviderSkipped(id, true);
+  renderProviderSkipList();
+  const toolsOnly = chatMode === 'agent';
+  const avail = getAvailableProviders({ toolsOnly });
+  const next = avail[0]?.id;
+  if (next) {
+    providerSelect.value = next;
+    if (headerProviderSelect) headerProviderSelect.value = next;
+    providerSelect.dispatchEvent(new Event('change'));
+  } else {
+    restoreProvider();
+  }
+  updateStatus();
+}
+
+activePill?.addEventListener('click', () => {
+  const id = activePill.dataset.skipProviderId;
+  if (!id || isProviderSkipped(id)) return;
+  skipProviderAndSwitchToNext(id);
+});
+
+activePill?.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  e.preventDefault();
+  activePill.click();
+});
+
 apiKeyInput.addEventListener('input', () => {
   const id = providerSelect.value;
   const trimmed = apiKeyInput.value.trim();
@@ -332,12 +363,20 @@ function updateStatus() {
     setStatus('offline', needsTools ? 'Agent mode needs a tool-capable provider' : 'No keys configured');
     activePill.textContent = '';
     activePill.className = 'provider-pill';
+    activePill.removeAttribute('data-skip-provider-id');
+    activePill.removeAttribute('title');
+    activePill.removeAttribute('tabindex');
+    activePill.removeAttribute('role');
     return;
   }
   if (chatMode === 'ask-all') {
     setStatus('online', `${available.length} provider${available.length > 1 ? 's' : ''} ready`);
     activePill.textContent = `Ask All (${available.length})`;
     activePill.className = 'provider-pill online';
+    activePill.removeAttribute('data-skip-provider-id');
+    activePill.removeAttribute('title');
+    activePill.removeAttribute('tabindex');
+    activePill.removeAttribute('role');
   } else {
     const first = available[0];
     const name = providers[first.id].name;
@@ -348,6 +387,20 @@ function updateStatus() {
     setStatus('online', `${prefix}${name}${extra}`);
     activePill.textContent = prefix + name;
     activePill.className = 'provider-pill online';
+    const skipId = lastFailedProviderId && available.some(a => a.id === lastFailedProviderId)
+      ? lastFailedProviderId
+      : null;
+    if (skipId && !isProviderSkipped(skipId)) {
+      activePill.dataset.skipProviderId = skipId;
+      activePill.title = `Tap to turn off “${providers[skipId]?.name || skipId}” for now and use the next provider (same as ☰ Who can answer)`;
+      activePill.setAttribute('role', 'button');
+      activePill.tabIndex = 0;
+    } else {
+      activePill.removeAttribute('data-skip-provider-id');
+      activePill.removeAttribute('title');
+      activePill.removeAttribute('tabindex');
+      activePill.removeAttribute('role');
+    }
   }
 }
 
@@ -370,12 +423,19 @@ async function sendAuto(msgs) {
     if (i > 0) setStatus('warning', `Trying ${name}…`);
 
     const ok = await streamChat(id, key, msgs, name);
-    if (ok) return;
+    if (ok) {
+      lastFailedProviderId = null;
+      updateStatus();
+      return;
+    }
+    lastFailedProviderId = id;
+    updateStatus();
     // streamChat returns false on failure; try next provider
   }
 
   appendMessage('assistant', 'All providers failed. Please check your API keys or connection.', true);
   setStatus('error', 'All providers failed');
+  updateStatus();
 }
 
 async function streamChat(id, key, msgs, name) {
@@ -408,6 +468,7 @@ async function streamChat(id, key, msgs, name) {
     if (!res.ok || !res.body) {
       let errMsg = `HTTP ${res.status}`;
       try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
+      lastFailedProviderId = id;
       bubble.remove();
       return false;
     }
@@ -447,6 +508,7 @@ async function streamChat(id, key, msgs, name) {
             bodyEl.classList.remove('streaming');
             wireMessageActions(bubble, buffer);
             messages.push({ role: 'assistant', content: buffer });
+            lastFailedProviderId = null;
             setStatus('online', `${name} responded`);
             activePill.textContent = name;
             activePill.className = 'provider-pill online';
@@ -466,6 +528,7 @@ async function streamChat(id, key, msgs, name) {
       bodyEl.classList.remove('streaming');
       wireMessageActions(bubble, buffer);
       messages.push({ role: 'assistant', content: buffer });
+      lastFailedProviderId = null;
       saveCurrentSession();
       return true;
     }
@@ -478,10 +541,12 @@ async function streamChat(id, key, msgs, name) {
       bodyEl.classList.remove('streaming');
       wireMessageActions(bubble, buffer);
       if (buffer) messages.push({ role: 'assistant', content: buffer });
+      lastFailedProviderId = null;
       setStatus('online', 'Stopped');
       return true;
     }
     console.error(err);
+    lastFailedProviderId = id;
     bubble.remove();
     return false;
   } finally {
@@ -526,10 +591,13 @@ async function sendAgent(msgs) {
       const data = await res.json();
       removeTyping(typingId);
       if (!res.ok || data.error) {
-        appendMessage('assistant', `Agent error (${name}): ${data.error || res.statusText}`, true, id);
+        lastFailedProviderId = id;
+        appendMessage('assistant', `Agent error (${name}): ${data.error || res.statusText}`, true, id, false, { skipProviderId: id });
         setStatus('warning', `${name} failed — trying next…`);
+        updateStatus();
         continue;
       }
+      lastFailedProviderId = null;
       appendAgentMessage(id, data);
       messages.push({ role: 'assistant', content: data.reply || '' });
       setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
@@ -541,19 +609,23 @@ async function sendAgent(msgs) {
     } catch (err) {
       removeTyping(typingId);
       if (err.name === 'AbortError') {
+        lastFailedProviderId = null;
         setStatus('online', 'Stopped');
         return;
       }
-      appendMessage('assistant', `Agent error (${name}): ${err.message}`, true, id);
+      lastFailedProviderId = id;
+      appendMessage('assistant', `Agent error (${name}): ${err.message}`, true, id, false, { skipProviderId: id });
       setStatus('warning', `${name} failed — trying next…`);
+      updateStatus();
     } finally {
       currentController = null;
       setLoading(false);
     }
   }
 
-  appendMessage('assistant', 'All tool-capable providers failed. Open the menu and cross off broken ones, or pick another provider in the header.', true);
+  appendMessage('assistant', 'All tool-capable providers failed. Tap the green provider pill to turn off the last one that failed, use ☰ Who can answer, or pick another host in the header.', true);
   setStatus('error', 'All agent providers failed');
+  updateStatus();
 }
 
 // ── Ask All mode: fan out, show each response with badge ──────────────────
@@ -1011,7 +1083,7 @@ function appendAssistantShell(providerId = null) {
   return div;
 }
 
-function appendMessage(role, content, isError = false, providerId = null, isAskAll = false) {
+function appendMessage(role, content, isError = false, providerId = null, isAskAll = false, opts = {}) {
   removeWelcome();
   const div = document.createElement('div');
   div.className = `message ${role}${isAskAll ? ' ask-all-group' : ''}`;
@@ -1019,6 +1091,9 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
   const name = role === 'user'
     ? 'You'
     : (providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name) || 'AI';
+  const skipBtn = isError && opts.skipProviderId && providers[opts.skipProviderId]
+    ? `<button type="button" class="msg-action-btn skip-provider-btn" data-skip-provider="${escapeAttr(opts.skipProviderId)}">Turn off for now</button>`
+    : '';
   div.innerHTML = `
     <div class="msg-meta">
       <span class="msg-avatar">${avatar}</span>
@@ -1029,9 +1104,14 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
     <div class="msg-actions">
       <button class="msg-action-btn copy-btn">Copy</button>
       ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
+      ${skipBtn}
     </div>`;
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
   wireMessageActions(div, content);
+  div.querySelector('.skip-provider-btn')?.addEventListener('click', () => {
+    const sid = div.querySelector('.skip-provider-btn')?.dataset.skipProvider;
+    if (sid) skipProviderAndSwitchToNext(sid);
+  });
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
