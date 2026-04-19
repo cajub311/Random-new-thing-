@@ -11,7 +11,7 @@ import { existsSync } from 'fs';
 import 'dotenv/config';
 
 import { PROVIDERS, DEFAULT_ORDER } from './lib/providers.js';
-import { chatCompletion, callOpenAI } from './lib/llm.js';
+import { chatCompletion, callOpenAI, probeLocal } from './lib/llm.js';
 import { loadSkills } from './skills/index.js';
 import { runAgent, SYSTEM_PROMPT, buildMemoryBrief } from './lib/brain.js';
 import { createMemory } from './lib/memory.js';
@@ -59,6 +59,24 @@ const memory = createMemory({ dir: WORKSPACE_DIR });
 const { skills, defs: TOOL_DEFS } = await loadSkills();
 logger.info('skills loaded', { count: Object.keys(skills).length, names: Object.keys(skills) });
 
+// Local LLM reachability (opt-in providers only — not used for auto-fallback order).
+let LOCAL_STATUS = {};
+async function refreshLocalStatus() {
+  for (const [id, p] of Object.entries(PROVIDERS)) {
+    if (!p.local) continue;
+    const status = await probeLocal(p);
+    LOCAL_STATUS[id] = status;
+    if (status.reachable && status.models?.length) {
+      PROVIDERS[id].models = status.models;
+      if (!PROVIDERS[id].models.includes(PROVIDERS[id].defaultModel) && status.models[0]) {
+        PROVIDERS[id].defaultModel = status.models[0];
+      }
+    }
+  }
+}
+refreshLocalStatus().catch(() => {});
+setInterval(() => refreshLocalStatus().catch(() => {}), 60_000).unref?.();
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 function resolveProvider(id) {
   const p = PROVIDERS[id];
@@ -74,7 +92,7 @@ function getKey(provider, apiKey) {
 function isProviderUsable(id) {
   const p = PROVIDERS[id];
   if (!p) return false;
-  if (p.local) return false;
+  if (p.local) return !!LOCAL_STATUS[id]?.reachable;
   if (p.keyless) return true;
   return !!(p.envKey && process.env[p.envKey]);
 }
@@ -83,6 +101,8 @@ function isProviderUsable(id) {
 app.get('/api/providers', (req, res) => {
   const result = {};
   for (const [id, p] of Object.entries(PROVIDERS)) {
+    const localStatus = LOCAL_STATUS[id];
+    const reachable = p.local ? !!localStatus?.reachable : undefined;
     result[id] = {
       name: p.name,
       description: p.description,
@@ -90,10 +110,14 @@ app.get('/api/providers', (req, res) => {
       defaultModel: p.defaultModel,
       free: p.free,
       local: !!p.local,
+      hidden: !!p.hidden,
       keyless: !!p.keyless,
       signupUrl: p.signupUrl,
-      configured: p.keyless || !!(p.envKey && process.env[p.envKey]),
+      configured: p.local
+        ? reachable
+        : p.keyless || !!(p.envKey && process.env[p.envKey]),
       supportsTools: !!p.supportsTools,
+      reachable,
     };
   }
   res.json(result);

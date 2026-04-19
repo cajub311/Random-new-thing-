@@ -17,6 +17,8 @@ const PROVIDER_ORDER = [
   'pollinations',
   'groq', 'cerebras', 'openrouter', 'gemini', 'together', 'deepseek', 'cohere', 'huggingface',
 ];
+// Local backends are never in this list — no auto-fallback to them. Opt-in via checkbox only.
+const LOCAL_PROVIDER_IDS = ['ollama', 'lmstudio', 'llamacpp'];
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -55,6 +57,7 @@ const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
+const showLocalProviders = document.getElementById('showLocalProviders');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -131,13 +134,25 @@ async function init() {
   fillTrustStripSlots();
 }
 
+function isLocalBackendShown() {
+  return !!(showLocalProviders && showLocalProviders.checked);
+}
+
+function shouldListProvider(id, p) {
+  if (!p.hidden) return true;
+  return isLocalBackendShown() && LOCAL_PROVIDER_IDS.includes(id);
+}
+
 function buildProviderUI() {
   providerSelect.innerHTML = '';
   providerCards.innerHTML = '';
   for (const [id, p] of Object.entries(providers)) {
+    if (!shouldListProvider(id, p)) continue;
+
     const opt = document.createElement('option');
     opt.value = id;
     opt.textContent = p.name + (p.configured ? ' ✓' : '');
+    opt.disabled = p.local && !p.configured;
     providerSelect.appendChild(opt);
 
     const card = document.createElement('div');
@@ -150,6 +165,7 @@ function buildProviderUI() {
       <div class="card-tag">${tag}</div>
       ${p.description ? `<div class="card-desc">${escapeHtml(p.description)}</div>` : ''}`;
     card.addEventListener('click', () => {
+      if (p.local && !p.configured) return;
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
       sidebar.classList.remove('collapsed');
@@ -165,9 +181,20 @@ function restoreProvider() {
     localStorage.removeItem('cc_provider');
     saved = null;
   }
+  if (saved && providers[saved]?.hidden && !shouldListProvider(saved, providers[saved])) {
+    localStorage.removeItem('cc_provider');
+    saved = null;
+  }
+  const listedIds = [...providerSelect.options].map(o => o.value);
+  if (saved && !listedIds.includes(saved)) {
+    localStorage.removeItem('cc_provider');
+    saved = null;
+  }
   const firstAvailable = getAvailableProviders()[0]?.id;
-  const target = (saved && providers[saved]) ? saved : (firstAvailable || Object.keys(providers)[0]);
-  if (target) providerSelect.value = target;
+  const firstListed = listedIds[0];
+  const target = (saved && providers[saved]) ? saved : (firstAvailable || firstListed);
+  if (target && listedIds.includes(target)) providerSelect.value = target;
+  else if (firstListed) providerSelect.value = firstListed;
   providerSelect.dispatchEvent(new Event('change'));
 }
 
@@ -239,8 +266,8 @@ function getAvailableProviders({ toolsOnly = false } = {}) {
     .map(id => {
       const p = providers[id];
       if (p.keyless) {
-        // Keyless cloud (e.g. Pollinations): always usable. Skip removed local stacks.
-        if (p.local) return null;
+        // Keyless cloud: always usable. Keyless local: only when reachable (server probed).
+        if (p.local && !p.configured) return null;
         return { id, key: '' };
       }
       const key = localStorage.getItem(`cc_key_${id}`) || '';
@@ -889,6 +916,7 @@ function showWelcome() {
   fillTrustStripSlots(messagesEl);
   const cards = document.getElementById('providerCardsWelcome');
   for (const [id, p] of Object.entries(providers)) {
+    if (!shouldListProvider(id, p)) continue;
     const card = document.createElement('div');
     const connected = getAvailableProviders().some(a => a.id === id);
     card.className = 'provider-card' + (connected ? ' configured' : '');
@@ -1342,10 +1370,24 @@ function loadSettings() {
     modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     modeHint.textContent = MODE_HINTS[mode] || '';
   }
+  if (showLocalProviders) {
+    showLocalProviders.checked = localStorage.getItem('cc_show_local_providers') === '1';
+  }
 }
 
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
+
+showLocalProviders?.addEventListener('change', () => {
+  localStorage.setItem('cc_show_local_providers', showLocalProviders.checked ? '1' : '0');
+  const cur = providerSelect.value;
+  if (!showLocalProviders.checked && providers[cur]?.local) {
+    localStorage.removeItem('cc_provider');
+  }
+  buildProviderUI();
+  restoreProvider();
+  updateStatus();
+});
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 init().then(() => { loadFiles(); loadMemory(); });
@@ -1356,7 +1398,7 @@ setInterval(async () => {
     const next = await res.json();
     let changed = false;
     for (const [id, p] of Object.entries(next)) {
-      if (providers[id]?.configured !== p.configured) changed = true;
+      if (providers[id]?.configured !== p.configured || providers[id]?.reachable !== p.reachable) changed = true;
     }
     providers = next;
     if (changed) { buildProviderUI(); updateStatus(); }
