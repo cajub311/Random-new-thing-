@@ -16,17 +16,31 @@
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/common.min.js"></script>
 </head>
 <body>
-  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <div class="history-backdrop" id="historyBackdrop" hidden aria-hidden="true"></div>
+
+  <!-- ── Left: conversation history (resizes main; drawer on small screens) ── -->
+  <aside class="history-rail" id="historyRail" aria-label="Conversation history">
+    <div class="history-rail-inner">
+      <div class="history-rail-header">
+        <button type="button" class="icon-btn history-rail-pin" id="historyRailPin" title="Collapse history" aria-expanded="true" aria-controls="historyRail">◀</button>
+        <span class="history-rail-title">Chats</span>
+        <button type="button" class="icon-btn history-rail-close-mobile" id="historyRailCloseMobile" title="Close" aria-label="Close conversation list">×</button>
+      </div>
+      <input type="search" class="history-search" id="historySearchInput" placeholder="Search conversations…" autocomplete="off" />
+      <button type="button" class="btn-new-chat" id="newChatBtn">New chat</button>
+      <ul id="sessionsList" class="sessions-list sessions-list--rail"></ul>
+      <div class="history-rail-footer">
+        <button type="button" class="history-export-btn" id="exportChatBtn" title="Export current chat as markdown">Export chat</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="app-shell" id="appShell">
+  <!-- ── Settings / tools sidebar ───────────────────────────────── -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <button class="icon-btn sidebar-close" id="sidebarClose" title="Back to chat" aria-label="Back to chat">←</button>
       <span class="logo">🐾 OpenClaw</span>
-      <button class="icon-btn" id="newChatBtn" title="New chat">＋</button>
-    </div>
-
-    <div class="sidebar-section" id="sessionsSection">
-      <label>Conversations <button class="icon-btn mini" id="exportChatBtn" title="Export current chat as markdown">↓</button></label>
-      <ul id="sessionsList" class="sessions-list"></ul>
     </div>
 
     <div class="sidebar-section">
@@ -91,7 +105,8 @@
   <!-- ── Main chat area ───────────────────────────────────────── -->
   <main class="main">
     <header class="topbar">
-      <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
+      <button type="button" class="icon-btn" id="historyToggle" title="Conversations">💬</button>
+      <button type="button" class="icon-btn" id="sidebarToggle" title="Settings">☰</button>
       <span class="topbar-title">OpenClaw</span>
       <span class="provider-pill" id="activePill"></span>
       <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
@@ -140,6 +155,7 @@
 
     <p class="disclaimer">Free AI APIs may have rate limits. CloudClaw never stores your messages or API keys.</p>
   </main>
+  </div><!-- app-shell -->
 
   <script src="app.js"></script>
 </body>

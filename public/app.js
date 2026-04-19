@@ -9,8 +9,9 @@ let isLoading   = false;
 let chatMode    = 'auto';        // 'auto' | 'agent' | 'ask-all'
 let pendingFileText = null;
 let currentController = null;    // AbortController for in-flight requests
-let sessions    = [];            // [{id, title, mode, messages, updated}]
+let sessions    = [];            // [{id, customTitle, mode, messages, updated}]
 let currentSessionId = null;
+let sessionSearchQuery = '';
 
 // Local LLMs first, then keyless cloud, then key-based cloud.
 const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
@@ -36,6 +37,12 @@ const loadingIcon    = document.getElementById('loadingIcon');
 const stopBtn        = document.getElementById('stopBtn');
 const clearBtn       = document.getElementById('clearBtn');
 const newChatBtn     = document.getElementById('newChatBtn');
+const historyRail    = document.getElementById('historyRail');
+const historyRailPin = document.getElementById('historyRailPin');
+const historyRailCloseMobile = document.getElementById('historyRailCloseMobile');
+const historyToggle  = document.getElementById('historyToggle');
+const historyBackdrop = document.getElementById('historyBackdrop');
+const historySearchInput = document.getElementById('historySearchInput');
 const sidebarToggle  = document.getElementById('sidebarToggle');
 const sidebar        = document.getElementById('sidebar');
 const providerCards  = document.getElementById('providerCards');
@@ -79,10 +86,142 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+const HISTORY_MQ = window.matchMedia('(max-width: 900px)');
+function isHistoryMobile() { return HISTORY_MQ.matches; }
+
+function migrateSessionShape(list) {
+  for (const s of list) {
+    if (!s || typeof s !== 'object') continue;
+    if (!('customTitle' in s)) {
+      const legacy = s.title != null && String(s.title).trim() ? String(s.title).trim() : null;
+      s.customTitle = legacy;
+      delete s.title;
+    }
+  }
+}
+
+function defaultThreadTitle(msgs) {
+  const first = msgs?.find(m => m.role === 'user');
+  if (!first) return 'New chat';
+  const t = String(first.content).replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim();
+  if (!t) return 'New chat';
+  return t.length > 40 ? t.slice(0, 40) + '…' : t;
+}
+
+function displaySessionTitle(s) {
+  const t = (s.customTitle != null && String(s.customTitle).trim()) ? String(s.customTitle).trim() : defaultThreadTitle(s.messages || []);
+  return t || 'New chat';
+}
+
+function threadPreviewSnippet(msgs) {
+  const last = [...(msgs || [])].reverse().find(m => m.role === 'user' || m.role === 'assistant');
+  if (!last?.content) return 'No messages yet';
+  let t = String(last.content).replace(/```[\s\S]*?```/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return 'No messages yet';
+  return t.length > 90 ? t.slice(0, 90) + '…' : t;
+}
+
+function formatThreadDate(ts) {
+  const d = new Date(ts || Date.now());
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString([], sameYear ? { month: 'short', day: 'numeric' } : { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function getFilteredSessions() {
+  const q = sessionSearchQuery.trim().toLowerCase();
+  let list = [...sessions];
+  if (q) {
+    list = list.filter(s => {
+      const title = displaySessionTitle(s).toLowerCase();
+      const prev = threadPreviewSnippet(s.messages).toLowerCase();
+      const when = formatThreadDate(s.updated).toLowerCase();
+      return title.includes(q) || prev.includes(q) || when.includes(q);
+    });
+  }
+  return list;
+}
+
+function closeHistoryDrawer() {
+  if (!historyRail) return;
+  historyRail.classList.remove('history-rail--open');
+  document.body.classList.remove('history-open');
+  if (historyBackdrop) historyBackdrop.hidden = true;
+}
+
+function openHistoryDrawer() {
+  if (!historyRail) return;
+  historyRail.classList.add('history-rail--open');
+  if (isHistoryMobile()) {
+    document.body.classList.add('history-open');
+    if (historyBackdrop) historyBackdrop.hidden = false;
+  }
+}
+
+function toggleHistoryDrawer() {
+  if (!historyRail) return;
+  if (historyRail.classList.contains('history-rail--open')) closeHistoryDrawer();
+  else openHistoryDrawer();
+}
+
+function applyHistoryRailLayout() {
+  if (!historyRail || !historyRailPin) return;
+  if (isHistoryMobile()) {
+    historyRail.classList.remove('history-rail--collapsed');
+    historyRailPin.setAttribute('aria-hidden', 'true');
+    closeHistoryDrawer();
+  } else {
+    historyRail.classList.remove('history-rail--open');
+    document.body.classList.remove('history-open');
+    if (historyBackdrop) historyBackdrop.hidden = true;
+    historyRailPin.removeAttribute('aria-hidden');
+    const collapsed = localStorage.getItem('cc_history_rail_collapsed') === '1';
+    historyRail.classList.toggle('history-rail--collapsed', collapsed);
+    historyRailPin.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    historyRailPin.textContent = collapsed ? '▶' : '◀';
+    historyRailPin.title = collapsed ? 'Expand history' : 'Collapse history';
+  }
+}
+
+function initHistoryRail() {
+  applyHistoryRailLayout();
+  const onMq = () => applyHistoryRailLayout();
+  if (HISTORY_MQ.addEventListener) HISTORY_MQ.addEventListener('change', onMq);
+  else HISTORY_MQ.addListener(onMq);
+
+  historyRailPin?.addEventListener('click', () => {
+    if (isHistoryMobile()) return;
+    const next = !historyRail.classList.contains('history-rail--collapsed');
+    historyRail.classList.toggle('history-rail--collapsed', next);
+    localStorage.setItem('cc_history_rail_collapsed', next ? '1' : '0');
+    applyHistoryRailLayout();
+  });
+
+  historyToggle?.addEventListener('click', () => {
+    if (isHistoryMobile()) toggleHistoryDrawer();
+    else {
+      const collapsed = historyRail.classList.toggle('history-rail--collapsed');
+      localStorage.setItem('cc_history_rail_collapsed', collapsed ? '1' : '0');
+      applyHistoryRailLayout();
+    }
+  });
+
+  historyRailCloseMobile?.addEventListener('click', () => closeHistoryDrawer());
+  historyBackdrop?.addEventListener('click', () => closeHistoryDrawer());
+
+  historySearchInput?.addEventListener('input', () => {
+    sessionSearchQuery = historySearchInput.value;
+    renderSessions();
+  });
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
   loadSessions();
+  initHistoryRail();
   try {
     const res = await fetch(`${API}/api/providers`);
     providers = await res.json();
@@ -591,6 +730,8 @@ clearBtn.addEventListener('click', () => { messages = []; showWelcome(); saveCur
 newChatBtn.addEventListener('click', () => newSession());
 
 sidebarToggle.addEventListener('click', () => {
+  const opening = sidebar.classList.contains('collapsed');
+  if (opening && isHistoryMobile()) closeHistoryDrawer();
   sidebar.classList.toggle('collapsed');
   sidebar.classList.toggle('open');
 });
@@ -986,13 +1127,21 @@ function timestamp() {
 // ── Sessions ───────────────────────────────────────────────────────────────
 function loadSessions() {
   try { sessions = JSON.parse(localStorage.getItem('cc_sessions') || '[]'); } catch { sessions = []; }
+  migrateSessionShape(sessions);
   currentSessionId = localStorage.getItem('cc_current_session') || null;
   if (currentSessionId) {
-    const s = sessions.find(s => s.id === currentSessionId);
+    const s = sessions.find(x => x.id === currentSessionId);
     if (s) {
-      messages = s.messages || [];
+      messages = [...(s.messages || [])];
       chatMode = s.mode || 'auto';
       if (messages.length) replayMessages();
+      else {
+        currentSessionId = null;
+        localStorage.removeItem('cc_current_session');
+      }
+    } else {
+      currentSessionId = null;
+      localStorage.removeItem('cc_current_session');
     }
   }
 }
@@ -1013,23 +1162,47 @@ function newSession() {
   localStorage.removeItem('cc_current_session');
   showWelcome();
   renderSessions();
+  closeHistoryDrawer();
 }
 
 function saveCurrentSession() {
-  if (messages.length === 0) return;
+  if (messages.length === 0) {
+    if (currentSessionId) {
+      const s = sessions.find(x => x.id === currentSessionId);
+      if (s) {
+        s.messages = [];
+        s.updated = Date.now();
+        sessions = sessions.slice(0, 30);
+        try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
+      }
+    }
+    renderSessions();
+    return;
+  }
   if (!currentSessionId) {
     currentSessionId = 's_' + Date.now();
     localStorage.setItem('cc_current_session', currentSessionId);
-    sessions.unshift({ id: currentSessionId, messages: [...messages], mode: chatMode, updated: Date.now(), title: sessionTitle(messages) });
+    sessions.unshift({
+      id: currentSessionId,
+      messages: [...messages],
+      mode: chatMode,
+      updated: Date.now(),
+      customTitle: null,
+    });
   } else {
-    const s = sessions.find(s => s.id === currentSessionId);
+    const s = sessions.find(x => x.id === currentSessionId);
     if (s) {
       s.messages = [...messages];
       s.mode = chatMode;
       s.updated = Date.now();
-      s.title = sessionTitle(messages);
     } else {
-      sessions.unshift({ id: currentSessionId, messages: [...messages], mode: chatMode, updated: Date.now(), title: sessionTitle(messages) });
+      sessions.unshift({
+        id: currentSessionId,
+        messages: [...messages],
+        mode: chatMode,
+        updated: Date.now(),
+        customTitle: null,
+      });
     }
   }
   sessions = sessions.slice(0, 30);
@@ -1037,37 +1210,69 @@ function saveCurrentSession() {
   renderSessions();
 }
 
-function sessionTitle(msgs) {
-  const first = msgs.find(m => m.role === 'user');
-  if (!first) return 'New chat';
-  const t = first.content.replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim();
-  return t.length > 48 ? t.slice(0, 48) + '…' : t;
-}
-
 function renderSessions() {
   if (!sessionsList) return;
   if (sessions.length === 0) {
-    sessionsList.innerHTML = '<li class="empty">No past chats</li>';
+    sessionsList.innerHTML = '<li class="empty">No conversations yet</li>';
     return;
   }
-  sessionsList.innerHTML = sessions.slice(0, 12).map(s => `
-    <li class="${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
-      <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
-      <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
-    </li>`).join('');
+  const filtered = getFilteredSessions();
+  if (filtered.length === 0) {
+    sessionsList.innerHTML = '<li class="empty">No matches</li>';
+    return;
+  }
+  sessionsList.innerHTML = filtered.slice(0, 100).map(s => {
+    const title = displaySessionTitle(s);
+    const preview = threadPreviewSnippet(s.messages);
+    const when = formatThreadDate(s.updated);
+    return `
+    <li class="session-row ${s.id === currentSessionId ? 'active' : ''}" data-id="${escapeAttr(s.id)}">
+      <div class="session-row-top">
+        <span class="session-title">${escapeHtml(title)}</span>
+        <span class="session-time">${escapeHtml(when)}</span>
+      </div>
+      <div class="session-preview">${escapeHtml(preview)}</div>
+      <div class="session-row-actions">
+        <button type="button" class="icon-btn mini session-rename" data-rename="${escapeAttr(s.id)}" title="Rename">✎</button>
+        <button type="button" class="icon-btn mini session-del" data-del="${escapeAttr(s.id)}" title="Delete">×</button>
+      </div>
+    </li>`;
+  }).join('');
 }
 
 sessionsList?.addEventListener('click', e => {
-  const del = e.target.closest('.session-del');
-  if (del) {
-    const id = del.dataset.del;
-    sessions = sessions.filter(s => s.id !== id);
+  const renameBtn = e.target.closest('.session-rename');
+  if (renameBtn) {
+    e.stopPropagation();
+    const id = renameBtn.dataset.rename;
+    const s = sessions.find(x => x.id === id);
+    if (!s) return;
+    const defTitle = displaySessionTitle(s);
+    const next = window.prompt('Conversation title', defTitle);
+    if (next === null) return;
+    const t = next.trim();
+    s.customTitle = t || null;
+    s.updated = Date.now();
     try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
-    if (id === currentSessionId) { currentSessionId = null; messages = []; showWelcome(); }
     renderSessions();
     return;
   }
-  const li = e.target.closest('li[data-id]');
+  const del = e.target.closest('.session-del');
+  if (del) {
+    e.stopPropagation();
+    const id = del.dataset.del;
+    sessions = sessions.filter(s => s.id !== id);
+    try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
+    if (id === currentSessionId) {
+      currentSessionId = null;
+      messages = [];
+      localStorage.removeItem('cc_current_session');
+      showWelcome();
+    }
+    renderSessions();
+    return;
+  }
+  const li = e.target.closest('li.session-row[data-id]');
   if (!li) return;
   const s = sessions.find(x => x.id === li.dataset.id);
   if (!s) return;
@@ -1076,13 +1281,16 @@ sessionsList?.addEventListener('click', e => {
   chatMode = s.mode || 'auto';
   setChatMode(chatMode);
   localStorage.setItem('cc_current_session', currentSessionId);
-  replayMessages();
+  if (messages.length) replayMessages();
+  else showWelcome();
   renderSessions();
+  closeHistoryDrawer();
 });
 
 function exportChat() {
   if (messages.length === 0) return;
-  const title = sessionTitle(messages);
+  const cur = sessions.find(x => x.id === currentSessionId);
+  const title = displaySessionTitle({ messages, customTitle: cur?.customTitle ?? null });
   const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
       const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
