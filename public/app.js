@@ -1032,6 +1032,7 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
     <div class="msg-bubble${isError ? ' error-bubble' : ''}">${imgHtml}${renderMarkdown(text)}</div>
     <div class="msg-actions">
       <button class="msg-action-btn copy-btn">Copy</button>
+      ${role === 'user' && images.length === 0 ? '<button class="msg-action-btn edit-btn" title="Edit and resend">Edit</button>' : ''}
       ${role === 'assistant' ? '<button class="msg-action-btn speak-btn" title="Read aloud">🔊</button>' : ''}
       ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
     </div>`;
@@ -1059,6 +1060,59 @@ function wireMessageActions(div, content) {
     else sendAuto([...messages]);
   });
   div.querySelector('.speak-btn')?.addEventListener('click', () => speakText(content, div.querySelector('.speak-btn')));
+  div.querySelector('.edit-btn')?.addEventListener('click', () => startEditUserMessage(div, content));
+}
+
+function startEditUserMessage(div, original) {
+  const bubble = div.querySelector('.msg-bubble');
+  const actions = div.querySelector('.msg-actions');
+  if (!bubble || bubble.querySelector('textarea')) return;
+  const ta = document.createElement('textarea');
+  ta.className = 'edit-textarea';
+  ta.value = original;
+  ta.rows = Math.min(12, Math.max(2, original.split('\n').length));
+  const save = document.createElement('button');
+  save.className = 'msg-action-btn';
+  save.textContent = 'Save & resend';
+  const cancel = document.createElement('button');
+  cancel.className = 'msg-action-btn';
+  cancel.textContent = 'Cancel';
+  const savedBubble = bubble.innerHTML;
+  const savedActions = actions ? actions.innerHTML : '';
+  bubble.innerHTML = '';
+  bubble.appendChild(ta);
+  if (actions) { actions.innerHTML = ''; actions.append(save, cancel); }
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+
+  cancel.addEventListener('click', () => {
+    bubble.innerHTML = savedBubble;
+    if (actions) actions.innerHTML = savedActions;
+    wireMessageActions(div, original);
+  });
+
+  save.addEventListener('click', () => {
+    const newText = ta.value.trim();
+    if (!newText) return;
+    const allMsgDivs = Array.from(messagesEl.querySelectorAll('.message'));
+    const domIdx = allMsgDivs.indexOf(div);
+    let msgIdx = -1, counted = -1;
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role === 'user' || messages[i].role === 'assistant') {
+        counted++;
+        if (counted === domIdx) { msgIdx = i; break; }
+      }
+    }
+    if (msgIdx === -1) return;
+    messages = messages.slice(0, msgIdx);
+    while (div.nextSibling) div.nextSibling.remove();
+    div.remove();
+    appendMessage('user', newText);
+    messages.push({ role: 'user', content: newText });
+    if (chatMode === 'agent') sendAgent([...messages]);
+    else if (chatMode === 'ask-all') sendAskAll([...messages]);
+    else sendAuto([...messages]);
+  });
 }
 
 // ── Text-to-speech ────────────────────────────────────────────────────────
@@ -1394,20 +1448,41 @@ function sessionTitle(msgs) {
   return t.length > 48 ? t.slice(0, 48) + '…' : t;
 }
 
+function sortedSessions(arr = sessions) {
+  return [...arr].sort((a, b) => {
+    if (!!b.pinned - !!a.pinned) return !!b.pinned - !!a.pinned;
+    return (b.updated || 0) - (a.updated || 0);
+  });
+}
+
 function renderSessions() {
   if (!sessionsList) return;
   if (sessions.length === 0) {
     sessionsList.innerHTML = '<li class="empty">No past chats</li>';
     return;
   }
-  sessionsList.innerHTML = sessions.slice(0, 12).map(s => `
-    <li class="${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
+  sessionsList.innerHTML = sortedSessions().slice(0, 30).map(s => `
+    <li class="${s.id === currentSessionId ? 'active' : ''}${s.pinned ? ' pinned' : ''}" data-id="${s.id}">
+      <button class="icon-btn mini session-pin" data-pin="${s.id}" title="${s.pinned ? 'Unpin' : 'Pin'}">${s.pinned ? '★' : '☆'}</button>
       <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
       <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
     </li>`).join('');
 }
 
 sessionsList?.addEventListener('click', e => {
+  const pin = e.target.closest('.session-pin');
+  if (pin) {
+    e.stopPropagation();
+    const id = pin.dataset.pin;
+    const s = sessions.find(x => x.id === id);
+    if (s) {
+      s.pinned = !s.pinned;
+      try { localStorage.setItem('cc_sessions', JSON.stringify(sessions)); } catch {}
+      renderSessions();
+      window.dispatchEvent(new CustomEvent('cc:session-saved'));
+    }
+    return;
+  }
   const del = e.target.closest('.session-del');
   if (del) {
     const id = del.dataset.del;
@@ -1512,8 +1587,9 @@ renderSessions = function () {
     sessionsList.innerHTML = `<li class="empty">${sessionFilter ? 'No matches' : 'No past chats'}</li>`;
     return;
   }
-  sessionsList.innerHTML = visible.slice(0, 30).map(s => `
-    <li class="${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
+  sessionsList.innerHTML = sortedSessions(visible).slice(0, 30).map(s => `
+    <li class="${s.id === currentSessionId ? 'active' : ''}${s.pinned ? ' pinned' : ''}" data-id="${s.id}">
+      <button class="icon-btn mini session-pin" data-pin="${s.id}" title="${s.pinned ? 'Unpin' : 'Pin'}">${s.pinned ? '★' : '☆'}</button>
       <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
       <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
     </li>`).join('');
@@ -1742,6 +1818,68 @@ paletteResults?.addEventListener('click', (e) => {
   if (it) { closePalette(); it.run(); }
 });
 paletteOverlay?.addEventListener('click', (e) => { if (e.target === paletteOverlay) closePalette(); });
+
+// ── Scroll-to-bottom button ──────────────────────────────────────────────
+(function scrollToBottom() {
+  const btn = document.getElementById('scrollBottomBtn');
+  if (!btn || !messagesEl) return;
+  const threshold = 120;
+  function nearBottom() {
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < threshold;
+  }
+  function update() { btn.hidden = nearBottom(); }
+  messagesEl.addEventListener('scroll', update, { passive: true });
+  btn.addEventListener('click', () => {
+    messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+  });
+  new MutationObserver(update).observe(messagesEl, { childList: true, subtree: true, characterData: true });
+  update();
+})();
+
+// ── Follow-up suggestion chips ───────────────────────────────────────────
+const followupChips = document.getElementById('followupChips');
+
+function showFollowups(items) {
+  if (!followupChips || !items?.length) return;
+  followupChips.innerHTML = items.map(t =>
+    `<button type="button" class="followup-chip">${escapeHtml(t)}</button>`).join('');
+  followupChips.hidden = false;
+}
+function clearFollowups() {
+  if (!followupChips) return;
+  followupChips.innerHTML = '';
+  followupChips.hidden = true;
+}
+followupChips?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.followup-chip');
+  if (!btn) return;
+  userInput.value = btn.textContent;
+  clearFollowups();
+  userInput.focus();
+  chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
+});
+
+function extractFollowups(reply) {
+  if (!reply || reply.length < 40) return [];
+  const lines = reply.split('\n').map(l => l.trim()).filter(Boolean);
+  const suggestions = [];
+  for (const l of lines) {
+    const q = l.match(/^[\-\*\d\.\)\s]*(.+\?)\s*$/);
+    if (q && q[1].length < 90 && q[1].length > 12) suggestions.push(q[1]);
+  }
+  const seen = new Set();
+  return suggestions.filter(s => !seen.has(s) && seen.add(s)).slice(0, 3);
+}
+
+// Clear follow-ups whenever user sends a message; refresh them after each
+// assistant reply gets saved.
+chatForm?.addEventListener('submit', clearFollowups);
+window.addEventListener('cc:session-saved', () => {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'assistant') return clearFollowups();
+  const text = typeof last.content === 'string' ? last.content : '';
+  showFollowups(extractFollowups(text));
+});
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 init().then(() => { loadFiles(); loadMemory(); });
