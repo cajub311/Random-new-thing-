@@ -231,11 +231,98 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 .messages::-webkit-scrollbar-track { background: transparent; }
 .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-.welcome { text-align: center; max-width: 600px; margin: auto; }
+.welcome { text-align: center; max-width: 720px; margin: auto; }
 .welcome-icon { font-size: 4rem; margin-bottom: 16px; }
 .welcome h1 { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 .welcome p { color: var(--text-muted); margin: 10px 0; line-height: 1.6; }
 .tip { font-size: 0.85rem; }
+
+/* ── Trust strip (welcome + sidebar) ─────────────────────────────────── */
+.trust-strip {
+  margin: 16px 0 12px;
+  padding: 0 4px;
+}
+.welcome .trust-strip { margin: 18px 0 14px; }
+.trust-strip-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  align-items: stretch;
+}
+.trust-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.25;
+  text-align: left;
+  max-width: 200px;
+  transition: border-color var(--transition), background var(--transition);
+}
+.trust-card:hover {
+  border-color: rgba(108, 99, 255, 0.45);
+  background: var(--surface);
+}
+.trust-card-icon {
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.trust-card-text {
+  color: var(--text-muted);
+  font-weight: 600;
+  hyphens: auto;
+}
+
+.sidebar-trust {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.sidebar-trust .trust-strip { margin: 0; padding: 0; }
+.sidebar-trust .trust-strip-inner {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.sidebar-trust .trust-card {
+  max-width: none;
+  padding: 7px 10px;
+  font-size: 0.68rem;
+}
+.sidebar-trust .trust-card-icon { font-size: 0.95rem; }
+
+@media (max-width: 640px) {
+  .trust-card { max-width: none; flex: 1 1 calc(50% - 4px); }
+}
+
+/* Welcome strip: swipe on very narrow viewports (from trust-bar-bacf) */
+@media (max-width: 520px) {
+  .welcome .trust-strip-inner {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    margin: 0 -4px;
+    padding-left: 4px;
+    padding-right: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .welcome .trust-card {
+    flex: 0 0 auto;
+    min-width: 148px;
+    max-width: none;
+  }
+  .welcome .trust-card-text { font-size: 0.65rem; }
+}
 
 .provider-cards { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 20px 0; }
 .provider-card {
@@ -617,3 +704,36 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 
 .memory-list::-webkit-scrollbar { width: 6px; }
 .memory-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Optional local LLM backends ───────────────────────────────────────── */
+.local-providers-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  cursor: pointer;
+  margin-bottom: 0;
+}
+.local-providers-label input {
+  margin-top: 3px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.local-providers-hint {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+.key-persist-hint {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 8px 0 4px;
+}

@@ -1,7 +1,7 @@
 {
   "name": "OpenClaw",
   "short_name": "OpenClaw",
-  "description": "Free, local-first, open-source AI assistant.",
+  "description": "Chat, search, generate images and files with free cloud or your API keys (e.g. Groq). No key required to start.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

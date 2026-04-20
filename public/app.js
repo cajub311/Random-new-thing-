@@ -12,8 +12,13 @@ let currentController = null;    // AbortController for in-flight requests
 let sessions    = [];            // [{id, title, mode, messages, updated}]
 let currentSessionId = null;
 
-// Local LLMs first, then keyless cloud, then key-based cloud.
-const PROVIDER_ORDER = ['ollama', 'lmstudio', 'llamacpp', 'pollinations', 'groq', 'gemini', 'together', 'cohere', 'huggingface'];
+// Keyless cloud first, then key-based cloud (sidebar key or server env).
+const PROVIDER_ORDER = [
+  'pollinations',
+  'groq', 'cerebras', 'openrouter', 'gemini', 'together', 'deepseek', 'cohere', 'huggingface',
+];
+// Local backends are never in this list — no auto-fallback to them. Opt-in via checkbox only.
+const LOCAL_PROVIDER_IDS = ['ollama', 'lmstudio', 'llamacpp'];
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const providerSelect = document.getElementById('providerSelect');
@@ -52,6 +57,8 @@ const slashMenu      = document.getElementById('slashMenu');
 const memoryList     = document.getElementById('memoryList');
 const refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
 const clearMemoryBtn = document.getElementById('clearMemoryBtn');
+const showLocalProviders = document.getElementById('showLocalProviders');
+const keyPersistHint = document.getElementById('keyPersistHint');
 
 // ── Markdown setup (marked + DOMPurify + highlight.js) ─────────────────────
 if (window.marked) {
@@ -78,6 +85,39 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+// ── Trust / privacy strip (shared markup for welcome + sidebar) ───────────
+const TRUST_STRIP_HTML = `
+  <section class="trust-strip" aria-label="Trust and privacy">
+    <div class="trust-strip-inner">
+      <div class="trust-card" title="Inspect and self-host the code">
+        <span class="trust-card-icon" aria-hidden="true">📖</span>
+        <span class="trust-card-text">100% Open Source</span>
+      </div>
+      <div class="trust-card" title="Local models keep chats on your device">
+        <span class="trust-card-icon" aria-hidden="true">🔒</span>
+        <span class="trust-card-text">Private by default (local-first)</span>
+      </div>
+      <div class="trust-card" title="Keyless cloud when no local LLM is available">
+        <span class="trust-card-icon" aria-hidden="true">☁️</span>
+        <span class="trust-card-text">Free cloud fallback</span>
+      </div>
+      <div class="trust-card" title="Agent mode with tools and long-term memory">
+        <span class="trust-card-icon" aria-hidden="true">🧠</span>
+        <span class="trust-card-text">Agent mode + tools + memory</span>
+      </div>
+      <div class="trust-card" title="This deployment does not persist your conversations">
+        <span class="trust-card-icon" aria-hidden="true">🚫</span>
+        <span class="trust-card-text">No data stored</span>
+      </div>
+    </div>
+  </section>`;
+
+function fillTrustStripSlots(root = document) {
+  root.querySelectorAll('[data-trust-strip]').forEach(el => {
+    el.innerHTML = TRUST_STRIP_HTML;
+  });
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   loadSettings();
@@ -92,15 +132,28 @@ async function init() {
     setStatus('error', 'Cannot reach server');
   }
   renderSessions();
+  fillTrustStripSlots();
+}
+
+function isLocalBackendShown() {
+  return !!(showLocalProviders && showLocalProviders.checked);
+}
+
+function shouldListProvider(id, p) {
+  if (!p.hidden) return true;
+  return isLocalBackendShown() && LOCAL_PROVIDER_IDS.includes(id);
 }
 
 function buildProviderUI() {
   providerSelect.innerHTML = '';
   providerCards.innerHTML = '';
   for (const [id, p] of Object.entries(providers)) {
+    if (!shouldListProvider(id, p)) continue;
+
     const opt = document.createElement('option');
     opt.value = id;
     opt.textContent = p.name + (p.configured ? ' ✓' : '');
+    opt.disabled = p.local && !p.configured;
     providerSelect.appendChild(opt);
 
     const card = document.createElement('div');
@@ -113,6 +166,7 @@ function buildProviderUI() {
       <div class="card-tag">${tag}</div>
       ${p.description ? `<div class="card-desc">${escapeHtml(p.description)}</div>` : ''}`;
     card.addEventListener('click', () => {
+      if (p.local && !p.configured) return;
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
       sidebar.classList.remove('collapsed');
@@ -123,10 +177,25 @@ function buildProviderUI() {
 }
 
 function restoreProvider() {
-  const saved = localStorage.getItem('cc_provider');
+  let saved = localStorage.getItem('cc_provider');
+  if (saved && !providers[saved]) {
+    localStorage.removeItem('cc_provider');
+    saved = null;
+  }
+  if (saved && providers[saved]?.hidden && !shouldListProvider(saved, providers[saved])) {
+    localStorage.removeItem('cc_provider');
+    saved = null;
+  }
+  const listedIds = [...providerSelect.options].map(o => o.value);
+  if (saved && !listedIds.includes(saved)) {
+    localStorage.removeItem('cc_provider');
+    saved = null;
+  }
   const firstAvailable = getAvailableProviders()[0]?.id;
-  const target = (saved && providers[saved]) ? saved : (firstAvailable || Object.keys(providers)[0]);
-  if (target) providerSelect.value = target;
+  const firstListed = listedIds[0];
+  const target = (saved && providers[saved]) ? saved : (firstAvailable || firstListed);
+  if (target && listedIds.includes(target)) providerSelect.value = target;
+  else if (firstListed) providerSelect.value = firstListed;
   providerSelect.dispatchEvent(new Event('change'));
 }
 
@@ -148,8 +217,10 @@ providerSelect.addEventListener('change', () => {
   if (p.keyless) {
     keySection.style.display = 'none';
     apiKeyInput.value = '';
+    if (keyPersistHint) keyPersistHint.style.display = 'none';
   } else {
     keySection.style.display = '';
+    if (keyPersistHint) keyPersistHint.style.display = '';
     const savedKey = localStorage.getItem(`cc_key_${id}`) || '';
     apiKeyInput.value = savedKey;
     getKeyLink.href = p.signupUrl;
@@ -160,12 +231,43 @@ providerSelect.addEventListener('change', () => {
   localStorage.setItem('cc_provider', id);
 });
 
-apiKeyInput.addEventListener('input', () => {
+function persistCurrentApiKey() {
   const id = providerSelect.value;
+  const p = providers[id];
+  if (!p || p.keyless) return;
   const trimmed = apiKeyInput.value.trim();
-  if (trimmed) localStorage.setItem(`cc_key_${id}`, trimmed);
-  else         localStorage.removeItem(`cc_key_${id}`);
+  try {
+    if (trimmed) localStorage.setItem(`cc_key_${id}`, trimmed);
+    else localStorage.removeItem(`cc_key_${id}`);
+    if (keyPersistHint) {
+      keyPersistHint.textContent = trimmed
+        ? 'Saved · stored in this browser for this exact site URL.'
+        : 'Paste a key to save it here. Each Vercel URL has its own storage — use one production domain so keys are not split.';
+      keyPersistHint.style.color = '';
+    }
+  } catch (e) {
+    if (keyPersistHint) {
+      keyPersistHint.textContent = 'Could not save (private mode or storage full). Try another browser or tab.';
+      keyPersistHint.style.color = 'var(--warning)';
+    }
+  }
+}
+
+apiKeyInput.addEventListener('input', () => {
+  persistCurrentApiKey();
   updateStatus();
+});
+apiKeyInput.addEventListener('change', persistCurrentApiKey);
+apiKeyInput.addEventListener('paste', () => {
+  queueMicrotask(() => {
+    persistCurrentApiKey();
+    updateStatus();
+  });
+});
+apiKeyInput.addEventListener('blur', persistCurrentApiKey);
+window.addEventListener('pagehide', persistCurrentApiKey);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') persistCurrentApiKey();
 });
 
 // ── Mode toggle ────────────────────────────────────────────────────────────
@@ -197,7 +299,11 @@ function getAvailableProviders({ toolsOnly = false } = {}) {
     .filter(id => !toolsOnly || providers[id].supportsTools)
     .map(id => {
       const p = providers[id];
-      if (p.keyless) return { id, key: '' };
+      if (p.keyless) {
+        // Keyless cloud: always usable. Keyless local: only when reachable (server probed).
+        if (p.local && !p.configured) return null;
+        return { id, key: '' };
+      }
       const key = localStorage.getItem(`cc_key_${id}`) || '';
       if (key || p.configured) return { id, key };
       return null;
@@ -841,7 +947,8 @@ function showWelcome() {
     <div class="welcome">
       <div class="welcome-icon">🐾</div>
       <h1>OpenClaw</h1>
-      <p>Free, local-first, open-source AI assistant. Runs on Ollama &amp; LM Studio, falls back to keyless cloud providers.</p>
+      <p>Free, open-source AI assistant. Uses the keyless Pollinations cloud by default; add API keys (e.g. Groq) for faster models.</p>
+      <div data-trust-strip></div>
       <div class="provider-cards" id="providerCardsWelcome"></div>
       <div class="quick-prompts">
         <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
@@ -851,10 +958,12 @@ function showWelcome() {
         <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
         <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
       </div>
-      <p class="tip"><strong>🎉 No API key required.</strong> OpenClaw works out of the box via the free keyless Pollinations provider. Start Ollama or LM Studio locally for fully private inference. Type <code>/help</code> for commands.</p>
+      <p class="tip"><strong>🎉 No API key required</strong> to start — Pollinations works out of the box. Paste a Groq key in the sidebar for much faster chat and agent runs. Type <code>/help</code> for commands.</p>
     </div>`;
+  fillTrustStripSlots(messagesEl);
   const cards = document.getElementById('providerCardsWelcome');
   for (const [id, p] of Object.entries(providers)) {
+    if (!shouldListProvider(id, p)) continue;
     const card = document.createElement('div');
     const connected = getAvailableProviders().some(a => a.id === id);
     card.className = 'provider-card' + (connected ? ' configured' : '');
@@ -1352,10 +1461,24 @@ function loadSettings() {
     modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     modeHint.textContent = MODE_HINTS[mode] || '';
   }
+  if (showLocalProviders) {
+    showLocalProviders.checked = localStorage.getItem('cc_show_local_providers') === '1';
+  }
 }
 
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
+
+showLocalProviders?.addEventListener('change', () => {
+  localStorage.setItem('cc_show_local_providers', showLocalProviders.checked ? '1' : '0');
+  const cur = providerSelect.value;
+  if (!showLocalProviders.checked && providers[cur]?.local) {
+    localStorage.removeItem('cc_provider');
+  }
+  buildProviderUI();
+  restoreProvider();
+  updateStatus();
+});
 
 // ── Light/dark theme toggle ──────────────────────────────────────────────
 (function theme() {
@@ -1622,14 +1745,14 @@ paletteOverlay?.addEventListener('click', (e) => { if (e.target === paletteOverl
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 init().then(() => { loadFiles(); loadMemory(); });
-// Refresh provider status every 30s so local LLMs appearing/disappearing reflect.
+// Refresh provider status periodically (e.g. env keys on the server).
 setInterval(async () => {
   try {
     const res = await fetch(`${API}/api/providers`);
     const next = await res.json();
     let changed = false;
     for (const [id, p] of Object.entries(next)) {
-      if (providers[id]?.configured !== p.configured) changed = true;
+      if (providers[id]?.configured !== p.configured || providers[id]?.reachable !== p.reachable) changed = true;
     }
     providers = next;
     if (changed) { buildProviderUI(); updateStatus(); }

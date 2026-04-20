@@ -59,11 +59,10 @@ const memory = createMemory({ dir: WORKSPACE_DIR });
 const { skills, defs: TOOL_DEFS } = await loadSkills();
 logger.info('skills loaded', { count: Object.keys(skills).length, names: Object.keys(skills) });
 
-// Local-provider auto-detection: we probe once at boot and every 60s.
-let LOCAL_STATUS = {};  // providerId -> { reachable, models }
+// Local LLM reachability (opt-in providers only — not used for auto-fallback order).
+let LOCAL_STATUS = {};
 async function refreshLocalStatus() {
-  for (const id of Object.keys(PROVIDERS)) {
-    const p = PROVIDERS[id];
+  for (const [id, p] of Object.entries(PROVIDERS)) {
     if (!p.local) continue;
     const status = await probeLocal(p);
     LOCAL_STATUS[id] = status;
@@ -103,6 +102,7 @@ app.get('/api/providers', (req, res) => {
   const result = {};
   for (const [id, p] of Object.entries(PROVIDERS)) {
     const localStatus = LOCAL_STATUS[id];
+    const reachable = p.local ? !!localStatus?.reachable : undefined;
     result[id] = {
       name: p.name,
       description: p.description,
@@ -110,13 +110,14 @@ app.get('/api/providers', (req, res) => {
       defaultModel: p.defaultModel,
       free: p.free,
       local: !!p.local,
+      hidden: !!p.hidden,
       keyless: !!p.keyless,
       signupUrl: p.signupUrl,
       configured: p.local
-        ? !!localStatus?.reachable
+        ? reachable
         : p.keyless || !!(p.envKey && process.env[p.envKey]),
       supportsTools: !!p.supportsTools,
-      reachable: p.local ? !!localStatus?.reachable : undefined,
+      reachable,
     };
   }
   res.json(result);
@@ -276,7 +277,7 @@ app.post('/api/agent', async (req, res) => {
 
   if (!provider.supportsTools) {
     return res.status(400).json({
-      error: `${provider.name} does not support tool calling. Use a local LLM (Ollama/LM Studio), Pollinations, Groq, or Together.`,
+      error: `${provider.name} does not support tool calling. Use Pollinations, Groq, Together, or another tool-capable provider.`,
     });
   }
   const key = getKey(provider, apiKey);

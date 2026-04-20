@@ -3,8 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OpenClaw — Free, Local-First AI Assistant</title>
-  <meta name="description" content="Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers." />
+  <title>OpenClaw — Free Local AI Assistant</title>
+  <meta name="description" content="Chat, search, generate images and files with free cloud or your API keys (e.g. Groq). No key required to start." />
+  <link rel="canonical" href="https://github.com/cajub311/Random-new-thing-" />
+  <!-- Open Graph / Twitter (static app — no Next.js metadata API) -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="OpenClaw — Free Local AI Assistant" />
+  <meta property="og:description" content="Chat, search, generate images and files with free cloud or your API keys (e.g. Groq). No key required to start." />
+  <meta property="og:url" content="https://github.com/cajub311/Random-new-thing-" />
+  <meta property="og:image" content="https://raw.githubusercontent.com/cajub311/Random-new-thing-/main/public/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="OpenClaw paw logo beside a chat-style preview" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="OpenClaw — Free Local AI Assistant" />
+  <meta name="twitter:description" content="Chat, search, generate images and files with free cloud or your API keys (e.g. Groq). No key required to start." />
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/cajub311/Random-new-thing-/main/public/og-image.png" />
   <meta name="theme-color" content="#0b1020" />
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
@@ -40,6 +54,16 @@
       <span class="mode-hint" id="modeHint">Chat mode — tries providers in order, auto-fallback on failure</span>
     </div>
 
+    <div class="sidebar-section sidebar-trust" data-trust-strip></div>
+
+    <div class="sidebar-section" id="localProvidersSection">
+      <label class="local-providers-label">
+        <input type="checkbox" id="showLocalProviders" />
+        Show local backends (Ollama, LM Studio, llama.cpp)
+      </label>
+      <p class="local-providers-hint">Off by default — no auto-fallback to localhost. Turn on only if you run a local LLM; then pick it like any other provider.</p>
+    </div>
+
     <div class="sidebar-section">
       <label>Preferred Provider</label>
       <select id="providerSelect"></select>
@@ -53,9 +77,10 @@
     <div class="sidebar-section" id="keySection">
       <label>API Key <span class="badge free">FREE</span></label>
       <div class="key-row">
-        <input type="password" id="apiKeyInput" placeholder="Paste your key…" autocomplete="off" />
+        <input type="password" id="apiKeyInput" name="openclaw-api-key" placeholder="Paste your key…" autocomplete="new-password" autocapitalize="off" spellcheck="false" />
         <button class="icon-btn" id="toggleKeyBtn" title="Show/hide">👁</button>
       </div>
+      <p class="key-persist-hint" id="keyPersistHint">Saved in this browser for this site URL. Use one Vercel domain so keys are not split across deployments.</p>
       <a id="getKeyLink" href="#" target="_blank" class="get-key-link">Get free key →</a>
     </div>
 
@@ -122,7 +147,8 @@
       <div class="welcome">
         <div class="welcome-icon">🐾</div>
         <h1>OpenClaw</h1>
-        <p>Free, local-first, open-source AI assistant. Runs on Ollama & LM Studio, falls back to keyless cloud providers.</p>
+        <p>Free, open-source AI assistant. Keyless Pollinations by default; add keys (e.g. Groq) in the sidebar for faster models.</p>
+        <div data-trust-strip></div>
         <div class="provider-cards" id="providerCards"></div>
         <div class="quick-prompts">
           <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
@@ -132,7 +158,7 @@
           <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of $350,000 at 6.5% interest. Show your work.">🧮 Do a calculation</button>
           <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
         </div>
-        <p class="tip" id="welcomeTip"><strong>🎉 No API key required.</strong> If you have <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> or <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> running locally, OpenClaw will auto-connect and keep everything private on your machine. Otherwise the free keyless Pollinations provider kicks in. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
+        <p class="tip" id="welcomeTip"><strong>🎉 No API key required</strong> to start — the free keyless Pollinations provider works immediately. Add a <a href="https://console.groq.com" target="_blank" rel="noopener">Groq</a> API key in the sidebar for faster responses; your key stays in this browser. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
       </div>
     </div>
 
