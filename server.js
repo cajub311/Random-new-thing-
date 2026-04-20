@@ -152,9 +152,9 @@ app.post('/api/chat', async (req, res) => {
 
 // ── Route: POST /api/chat/stream ──────────────────────────────────────────
 app.post('/api/chat/stream', async (req, res) => {
-  const { provider: providerId = DEFAULT_ORDER[0], model, messages, apiKey } = req.body;
+  const { provider: providerId = DEFAULT_ORDER[0], model, messages: rawMessages, apiKey } = req.body;
 
-  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+  if (!rawMessages || !Array.isArray(rawMessages) || rawMessages.length === 0) {
     return res.status(400).json({ error: 'messages array is required' });
   }
   let provider;
@@ -165,6 +165,28 @@ app.post('/api/chat/stream', async (req, res) => {
   if (!provider.keyless && !key) {
     return res.status(400).json({ error: `No API key for ${provider.name}.` });
   }
+
+  // Inject a concise memory brief so even non-agent chats benefit from
+  // durable facts the user has stored. We only add the brief if there are
+  // relevant matches, so normal chats stay untouched.
+  let messages = rawMessages;
+  try {
+    const userMsgs = rawMessages.filter(m => m.role === 'user' && typeof m.content === 'string');
+    if (userMsgs.length) {
+      const brief = await buildMemoryBrief(memory, userMsgs, 5);
+      if (brief) {
+        const existingSystem = rawMessages.find(m => m.role === 'system');
+        const memNote = `Durable facts about the user (from memory):\n${brief}`;
+        if (existingSystem) {
+          messages = rawMessages.map(m =>
+            m === existingSystem ? { ...m, content: `${m.content}\n\n${memNote}` } : m
+          );
+        } else {
+          messages = [{ role: 'system', content: memNote }, ...rawMessages];
+        }
+      }
+    }
+  } catch (e) { req.log.warn('memory brief failed', { err: e.message }); }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -291,11 +313,19 @@ app.post('/api/agent', async (req, res) => {
     const userMsgs = messages.filter(m => m.role !== 'system');
 
     const memoryBrief = await buildMemoryBrief(memory, userMsgs);
-    const systemContent = SYSTEM_PROMPT({
+    let systemContent = SYSTEM_PROMPT({
       memoryBrief,
       toolNames: Object.keys(skills),
       currentTime: new Date().toISOString(),
     }) + (userSystem ? '\n\nAdditional instructions from the user:\n' + userSystem : '');
+
+    // If the user's latest message contains URLs, tell the model explicitly
+    // — small models frequently ignore a pasted link instead of fetching it.
+    const lastUser = [...userMsgs].reverse().find(m => m.role === 'user' && typeof m.content === 'string');
+    const urls = lastUser ? (lastUser.content.match(/https?:\/\/[^\s<>"']+/g) || []).slice(0, 5) : [];
+    if (urls.length) {
+      systemContent += `\n\nThe user's message contains these URLs. Before answering, call fetch_url on each one so your reply is grounded in the actual page contents (not your prior training): ${urls.join(' ')}`;
+    }
 
     const baseMessages = [
       { role: 'system', content: systemContent },
