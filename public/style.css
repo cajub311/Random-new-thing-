@@ -802,3 +802,18 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
   font: inherit;
   resize: vertical;
 }
+
+.typing-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.typing-progress .typing-bubble {
+  display: inline-flex;
+  gap: 3px;
+}
+.typing-progress .typing-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+}

@@ -97,6 +97,44 @@ function isProviderUsable(id) {
   return !!(p.envKey && process.env[p.envKey]);
 }
 
+// ── Per-provider rate-limit cooldown ──────────────────────────────────────
+// When an upstream returns 429 we don't want to keep hammering it on the
+// next request. Track an "unavailable until" timestamp per provider and skip
+// it from the fallback chain while cooling down. Wraps callOpenAI so every
+// 429 gets recorded automatically.
+const providerCooldown = (() => {
+  const until = new Map();
+  return {
+    note(id, status) {
+      if (!id) return;
+      if (status === 429) until.set(id, Date.now() + 60_000);           // 1 min
+      else if (status >= 500) until.set(id, Date.now() + 15_000);       // 15 s
+    },
+    isCooling(id) {
+      const t = until.get(id);
+      if (!t) return false;
+      if (Date.now() > t) { until.delete(id); return false; }
+      return true;
+    },
+  };
+})();
+
+function providerIdOf(provider) {
+  for (const [id, p] of Object.entries(PROVIDERS)) if (p === provider) return id;
+  return null;
+}
+
+async function callOpenAIWithCooldown(provider, messages, model, apiKey, opts) {
+  try {
+    return await callOpenAI(provider, messages, model, apiKey, opts);
+  } catch (e) {
+    const id = providerIdOf(provider);
+    const statusMatch = String(e.message || '').match(/\b(\d{3})\b/);
+    if (statusMatch) providerCooldown.note(id, parseInt(statusMatch[1], 10));
+    throw e;
+  }
+}
+
 // ── Route: GET /api/providers ─────────────────────────────────────────────
 app.get('/api/providers', (req, res) => {
   const result = {};
@@ -287,100 +325,177 @@ app.post('/api/chat/stream', async (req, res) => {
 });
 
 // ── Route: POST /api/agent ────────────────────────────────────────────────
-app.post('/api/agent', async (req, res) => {
+// Shared helper: validate input, build system prompt, memory brief, URL hint,
+// and assemble the fallback provider chain. Returns either an error envelope
+// (res already written) or a config object both /api/agent and /api/agent/stream
+// feed into runAgent.
+async function prepareAgentRun(req, res) {
   const { provider: providerId = DEFAULT_ORDER[0], model, messages, apiKey, maxSteps = 8 } = req.body;
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: 'messages array is required' });
+    res.status(400).json({ error: 'messages array is required' });
+    return null;
   }
   let provider;
   try { provider = resolveProvider(providerId); }
-  catch (e) { return res.status(400).json({ error: e.message }); }
+  catch (e) { res.status(400).json({ error: e.message }); return null; }
 
   if (!provider.supportsTools) {
-    return res.status(400).json({
+    res.status(400).json({
       error: `${provider.name} does not support tool calling. Use Pollinations, Groq, Together, or another tool-capable provider.`,
     });
+    return null;
   }
   const key = getKey(provider, apiKey);
   if (!provider.keyless && !key) {
-    return res.status(400).json({ error: `No API key for ${provider.name}.` });
+    res.status(400).json({ error: `No API key for ${provider.name}.` });
+    return null;
   }
 
+  const userSystem = messages.find(m => m.role === 'system')?.content || '';
+  const userMsgs = messages.filter(m => m.role !== 'system');
+
+  const memoryBrief = await buildMemoryBrief(memory, userMsgs);
+  let systemContent = SYSTEM_PROMPT({
+    memoryBrief,
+    toolNames: Object.keys(skills),
+    currentTime: new Date().toISOString(),
+  }) + (userSystem ? '\n\nAdditional instructions from the user:\n' + userSystem : '');
+
+  const lastUser = [...userMsgs].reverse().find(m => m.role === 'user' && typeof m.content === 'string');
+  const urls = lastUser ? (lastUser.content.match(/https?:\/\/[^\s<>"']+/g) || []).slice(0, 5) : [];
+  if (urls.length) {
+    systemContent += `\n\nThe user's message contains these URLs. Before answering, call fetch_url on each one so your reply is grounded in the actual page contents (not your prior training): ${urls.join(' ')}`;
+  }
+
+  const baseMessages = [
+    { role: 'system', content: systemContent },
+    ...userMsgs,
+  ];
+
+  const ctx = {
+    workspaceDir: WORKSPACE_DIR,
+    memory,
+    logger: req.log,
+    requestId: req.id,
+  };
+
+  const fallbackProviders = DEFAULT_ORDER
+    .filter(id => id !== providerId && !providerCooldown.isCooling(id))
+    .map(id => {
+      const p = PROVIDERS[id];
+      if (!p || !p.supportsTools) return null;
+      if (!isProviderUsable(id)) return null;
+      const k = getKey(p, null);
+      if (!p.keyless && !k) return null;
+      return { id, provider: p, model: p.defaultModel, apiKey: k };
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+
+  return {
+    providerId, provider, model, apiKey: key, baseMessages, ctx,
+    fallbackProviders, maxSteps: Math.min(Math.max(1, maxSteps | 0), 12),
+  };
+}
+
+app.post('/api/agent', async (req, res) => {
+  const cfg = await prepareAgentRun(req, res);
+  if (!cfg) return;
   try {
-    // Extract the user-supplied system prompt (optional) + user messages.
-    const userSystem = messages.find(m => m.role === 'system')?.content || '';
-    const userMsgs = messages.filter(m => m.role !== 'system');
-
-    const memoryBrief = await buildMemoryBrief(memory, userMsgs);
-    let systemContent = SYSTEM_PROMPT({
-      memoryBrief,
-      toolNames: Object.keys(skills),
-      currentTime: new Date().toISOString(),
-    }) + (userSystem ? '\n\nAdditional instructions from the user:\n' + userSystem : '');
-
-    // If the user's latest message contains URLs, tell the model explicitly
-    // — small models frequently ignore a pasted link instead of fetching it.
-    const lastUser = [...userMsgs].reverse().find(m => m.role === 'user' && typeof m.content === 'string');
-    const urls = lastUser ? (lastUser.content.match(/https?:\/\/[^\s<>"']+/g) || []).slice(0, 5) : [];
-    if (urls.length) {
-      systemContent += `\n\nThe user's message contains these URLs. Before answering, call fetch_url on each one so your reply is grounded in the actual page contents (not your prior training): ${urls.join(' ')}`;
-    }
-
-    const baseMessages = [
-      { role: 'system', content: systemContent },
-      ...userMsgs,
-    ];
-
-    const ctx = {
-      workspaceDir: WORKSPACE_DIR,
-      memory,
-      logger: req.log,
-      requestId: req.id,
-    };
-
-    // Build a fallback chain from the provider registry so a transient
-    // failure of the primary provider doesn't kill the whole request.
-    // Only include providers that (a) support tools, (b) are different from
-    // the primary, and (c) are usable right now (keyless or have a key).
-    const fallbackProviders = DEFAULT_ORDER
-      .filter(id => id !== providerId)
-      .map(id => {
-        const p = PROVIDERS[id];
-        if (!p || !p.supportsTools) return null;
-        if (!isProviderUsable(id)) return null;
-        const k = getKey(p, null);
-        if (!p.keyless && !k) return null;
-        return { provider: p, model: p.defaultModel, apiKey: k };
-      })
-      .filter(Boolean)
-      .slice(0, 3);
-
     const result = await runAgent({
-      provider,
-      callOpenAI,
-      messages: baseMessages,
-      model,
-      apiKey: key,
+      provider: cfg.provider,
+      callOpenAI: callOpenAIWithCooldown,
+      messages: cfg.baseMessages,
+      model: cfg.model,
+      apiKey: cfg.apiKey,
       skills,
       toolDefs: TOOL_DEFS,
-      maxSteps: Math.min(Math.max(1, maxSteps | 0), 12),
-      ctx,
-      fallbackProviders,
+      maxSteps: cfg.maxSteps,
+      ctx: cfg.ctx,
+      fallbackProviders: cfg.fallbackProviders,
     });
 
-    req.log.info('agent done', { steps: result.steps, provider: providerId });
+    req.log.info('agent done', { steps: result.steps, provider: cfg.providerId });
     res.json({
       reply: result.reply,
-      provider: provider.name,
-      model: model || provider.defaultModel,
+      provider: cfg.provider.name,
+      model: cfg.model || cfg.provider.defaultModel,
       steps: result.steps,
       trace: result.trace,
       truncated: !!result.truncated,
     });
   } catch (err) {
-    req.log.error('agent failed', { err: err.message, provider: providerId });
+    req.log.error('agent failed', { err: err.message, provider: cfg.providerId });
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Route: POST /api/agent/stream ─────────────────────────────────────────
+// Same as /api/agent but emits SSE events for each tool step so the UI can
+// display live progress ("searching web...", "reading page X..."). Ends with
+// a `done` event carrying the final reply + trace.
+app.post('/api/agent/stream', async (req, res) => {
+  const cfg = await prepareAgentRun(req, res);
+  if (!cfg) return;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  let closed = false;
+  req.on('close', () => { closed = true; });
+
+  send('start', { provider: cfg.provider.name, model: cfg.model || cfg.provider.defaultModel });
+
+  try {
+    const result = await runAgent({
+      provider: cfg.provider,
+      callOpenAI: callOpenAIWithCooldown,
+      messages: cfg.baseMessages,
+      model: cfg.model,
+      apiKey: cfg.apiKey,
+      skills,
+      toolDefs: TOOL_DEFS,
+      maxSteps: cfg.maxSteps,
+      ctx: cfg.ctx,
+      fallbackProviders: cfg.fallbackProviders,
+      onStep: (entry) => {
+        if (closed) return;
+        // Redact heavy fields from the live stream — keep it a light progress
+        // indicator, not the full trace. The client gets the full trace in
+        // the terminal `done` event.
+        const args = entry.args && typeof entry.args === 'object' ? { ...entry.args } : {};
+        delete args.text;
+        send('step', {
+          step: entry.step,
+          tool: entry.tool,
+          args,
+        });
+      },
+    });
+    if (closed) return;
+    req.log.info('agent stream done', { steps: result.steps, provider: cfg.providerId });
+    send('done', {
+      reply: result.reply,
+      provider: cfg.provider.name,
+      model: cfg.model || cfg.provider.defaultModel,
+      steps: result.steps,
+      trace: result.trace,
+      truncated: !!result.truncated,
+    });
+  } catch (err) {
+    req.log.error('agent stream failed', { err: err.message, provider: cfg.providerId });
+    if (!closed) send('error', { message: err.message });
+  } finally {
+    if (!closed) res.end();
   }
 });
 

@@ -478,6 +478,51 @@ async function streamChat(id, key, msgs, name) {
 }
 
 // ── Agent mode ────────────────────────────────────────────────────────────
+const TOOL_PROGRESS_LABELS = {
+  plan: 'Planning',
+  web_search: 'Searching web',
+  fetch_url: 'Reading page',
+  read_file: 'Reading file',
+  create_file: 'Writing file',
+  remember: 'Remembering',
+  recall: 'Recalling',
+  calculate: 'Calculating',
+  generate_image: 'Generating image',
+  draft_email: 'Drafting email',
+  current_time: 'Checking time',
+  extract_structured: 'Extracting data',
+  summarize_text: 'Summarizing',
+  weather: 'Checking weather',
+  final_answer: 'Writing answer',
+};
+
+function progressLabelFor(tool, args) {
+  const base = TOOL_PROGRESS_LABELS[tool] || `Using ${tool}`;
+  if (!args) return base;
+  if (tool === 'web_search' && args.query) return `${base}: "${String(args.query).slice(0, 60)}"`;
+  if (tool === 'fetch_url' && args.url)    return `${base}: ${String(args.url).slice(0, 70)}`;
+  if (tool === 'read_file' && args.path)   return `${base}: ${args.path}`;
+  if (tool === 'create_file' && args.path) return `${base}: ${args.path}`;
+  if (tool === 'calculate' && args.expression) return `${base}: ${String(args.expression).slice(0, 60)}`;
+  if (tool === 'remember' && args.text)    return `${base}: "${String(args.text).slice(0, 50)}"`;
+  return base;
+}
+
+function setTypingProgress(typingId, label) {
+  const div = document.getElementById(typingId);
+  if (!div) return;
+  const bubble = div.querySelector('.msg-bubble');
+  if (!bubble) return;
+  bubble.innerHTML = `
+    <div class="typing-progress">
+      <span class="typing-bubble">
+        <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+      </span>
+      <span class="typing-label">${escapeHtml(label)}</span>
+    </div>`;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 async function sendAgent(msgs) {
   const available = getAvailableProviders({ toolsOnly: true });
   if (available.length === 0) {
@@ -491,7 +536,7 @@ async function sendAgent(msgs) {
   setLoading(true, true);
 
   try {
-    const res = await fetch(`${API}/api/agent`, {
+    const res = await fetch(`${API}/api/agent/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -506,16 +551,61 @@ async function sendAgent(msgs) {
       }),
       signal: currentController.signal,
     });
-    const data = await res.json();
-    removeTyping(typingId);
-    if (!res.ok || data.error) {
-      appendMessage('assistant', `Agent error: ${data.error || res.statusText}`, true, id);
+
+    if (!res.ok || !res.body) {
+      const fallback = await res.json().catch(() => ({}));
+      removeTyping(typingId);
+      appendMessage('assistant', `Agent error: ${fallback.error || res.statusText}`, true, id);
       setStatus('error', 'Agent failed');
       return;
     }
-    appendAgentMessage(id, data);
-    messages.push({ role: 'assistant', content: data.reply || '' });
-    setStatus('online', `${name} answered (${data.steps} step${data.steps === 1 ? '' : 's'})`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let finalData = null;
+    let streamErr = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        let event = 'message', data = '';
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        let obj; try { obj = JSON.parse(data); } catch { continue; }
+        if (event === 'start') {
+          setTypingProgress(typingId, 'Thinking…');
+        } else if (event === 'step') {
+          setTypingProgress(typingId, progressLabelFor(obj.tool, obj.args));
+        } else if (event === 'done') {
+          finalData = obj;
+        } else if (event === 'error') {
+          streamErr = obj.message || 'stream error';
+        }
+      }
+    }
+
+    removeTyping(typingId);
+    if (streamErr) {
+      appendMessage('assistant', `Agent error: ${streamErr}`, true, id);
+      setStatus('error', 'Agent failed');
+      return;
+    }
+    if (!finalData) {
+      appendMessage('assistant', 'Agent returned no final answer.', true, id);
+      setStatus('error', 'Agent failed');
+      return;
+    }
+    appendAgentMessage(id, finalData);
+    messages.push({ role: 'assistant', content: finalData.reply || '' });
+    setStatus('online', `${name} answered (${finalData.steps} step${finalData.steps === 1 ? '' : 's'})`);
     activePill.textContent = `🤖 ${name}`;
     activePill.className = 'provider-pill online';
     saveCurrentSession();
