@@ -309,6 +309,23 @@ app.post('/api/agent', async (req, res) => {
       requestId: req.id,
     };
 
+    // Build a fallback chain from the provider registry so a transient
+    // failure of the primary provider doesn't kill the whole request.
+    // Only include providers that (a) support tools, (b) are different from
+    // the primary, and (c) are usable right now (keyless or have a key).
+    const fallbackProviders = DEFAULT_ORDER
+      .filter(id => id !== providerId)
+      .map(id => {
+        const p = PROVIDERS[id];
+        if (!p || !p.supportsTools) return null;
+        if (!isProviderUsable(id)) return null;
+        const k = getKey(p, null);
+        if (!p.keyless && !k) return null;
+        return { provider: p, model: p.defaultModel, apiKey: k };
+      })
+      .filter(Boolean)
+      .slice(0, 3);
+
     const result = await runAgent({
       provider,
       callOpenAI,
@@ -319,6 +336,7 @@ app.post('/api/agent', async (req, res) => {
       toolDefs: TOOL_DEFS,
       maxSteps: Math.min(Math.max(1, maxSteps | 0), 12),
       ctx,
+      fallbackProviders,
     });
 
     req.log.info('agent done', { steps: result.steps, provider: providerId });
