@@ -476,10 +476,11 @@ chatForm.addEventListener('submit', async e => {
   e.preventDefault();
   if (isLoading) return;
   let text = userInput.value.trim();
-  if (!text && !pendingFileText) return;
+  const images = (typeof window.__takeOutgoingImages === 'function') ? window.__takeOutgoingImages() : [];
+  if (!text && !pendingFileText && images.length === 0) return;
 
-  // Slash commands
-  if (text.startsWith('/')) {
+  // Slash commands (only if no images)
+  if (text.startsWith('/') && images.length === 0) {
     const handled = handleSlashCommand(text);
     if (handled) { userInput.value = ''; userInput.style.height = 'auto'; return; }
   }
@@ -487,14 +488,26 @@ chatForm.addEventListener('submit', async e => {
   if (pendingFileText) {
     text = text ? `${text}\n\n\`\`\`\n${pendingFileText}\n\`\`\`` : `\`\`\`\n${pendingFileText}\n\`\`\``;
     pendingFileText = null;
-    userInput.placeholder = 'Ask anything… (Shift+Enter for new line, type / for commands)';
+    userInput.placeholder = 'Ask anything, paste images, drop files… (Shift+Enter for new line)';
   }
 
   userInput.value = '';
   userInput.style.height = 'auto';
   removeWelcome();
-  appendMessage('user', text);
-  messages.push({ role: 'user', content: text });
+
+  // Build multimodal content if images are attached, otherwise plain string.
+  let content;
+  if (images.length) {
+    const parts = [];
+    if (text) parts.push({ type: 'text', text });
+    for (const im of images) parts.push({ type: 'image_url', image_url: { url: im.dataUrl } });
+    content = parts;
+  } else {
+    content = text;
+  }
+
+  appendMessage('user', content);
+  messages.push({ role: 'user', content });
   saveCurrentSession();
 
   if (chatMode === 'ask-all')     await sendAskAll([...messages]);
@@ -877,6 +890,18 @@ function appendAssistantShell(providerId = null) {
   return div;
 }
 
+function splitMultimodal(content) {
+  if (typeof content === 'string') return { text: content, images: [] };
+  if (!Array.isArray(content)) return { text: String(content ?? ''), images: [] };
+  let text = '';
+  const images = [];
+  for (const part of content) {
+    if (part?.type === 'text') text += (text ? '\n' : '') + (part.text || '');
+    else if (part?.type === 'image_url') images.push(part.image_url?.url || '');
+  }
+  return { text, images: images.filter(Boolean) };
+}
+
 function appendMessage(role, content, isError = false, providerId = null, isAskAll = false) {
   removeWelcome();
   const div = document.createElement('div');
@@ -885,19 +910,25 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
   const name = role === 'user'
     ? 'You'
     : (providerId ? providers[providerId]?.name : providers[providerSelect.value]?.name) || 'AI';
+  const { text, images } = splitMultimodal(content);
+  const imgHtml = images.map(u =>
+    `<img src="${escapeAttr(u)}" class="msg-image" alt="attached image" style="max-width:220px;max-height:220px;border-radius:8px;margin:4px 4px 0 0;">`
+  ).join('');
   div.innerHTML = `
     <div class="msg-meta">
       <span class="msg-avatar">${avatar}</span>
       <strong>${escapeHtml(name)}</strong>
       <span>${timestamp()}</span>
     </div>
-    <div class="msg-bubble${isError ? ' error-bubble' : ''}">${renderMarkdown(content)}</div>
+    <div class="msg-bubble${isError ? ' error-bubble' : ''}">${imgHtml}${renderMarkdown(text)}</div>
     <div class="msg-actions">
       <button class="msg-action-btn copy-btn">Copy</button>
+      ${role === 'assistant' ? '<button class="msg-action-btn speak-btn" title="Read aloud">🔊</button>' : ''}
       ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
     </div>`;
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
-  wireMessageActions(div, content);
+  wireMessageActions(div, text);
+  injectArtifactTriggers(div.querySelector('.msg-bubble'));
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
@@ -918,6 +949,32 @@ function wireMessageActions(div, content) {
     else if (chatMode === 'ask-all') sendAskAll([...messages]);
     else sendAuto([...messages]);
   });
+  div.querySelector('.speak-btn')?.addEventListener('click', () => speakText(content, div.querySelector('.speak-btn')));
+}
+
+// ── Text-to-speech ────────────────────────────────────────────────────────
+let currentUtterance = null;
+function speakText(text, btn) {
+  if (!('speechSynthesis' in window)) return;
+  if (currentUtterance) {
+    speechSynthesis.cancel();
+    const active = document.querySelector('.speak-btn.speaking');
+    if (active) active.classList.remove('speaking');
+    if (currentUtterance.__btn === btn) { currentUtterance = null; return; }
+  }
+  const clean = String(text || '').replace(/```[\s\S]*?```/g, ' code block ')
+                                  .replace(/`([^`]+)`/g, '$1')
+                                  .replace(/\*\*([^*]+)\*\*/g, '$1')
+                                  .replace(/[*_#>~]/g, '')
+                                  .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+                                  .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  const u = new SpeechSynthesisUtterance(clean);
+  u.rate = 1.05;
+  u.__btn = btn;
+  u.onstart = () => btn?.classList.add('speaking');
+  u.onend = u.onerror = () => { btn?.classList.remove('speaking'); if (currentUtterance === u) currentUtterance = null; };
+  currentUtterance = u;
+  speechSynthesis.speak(u);
 }
 
 function enhanceCodeBlocks(root) {
@@ -1299,6 +1356,269 @@ function loadSettings() {
 
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
 tempRange.addEventListener('input', () => localStorage.setItem('cc_temp', tempRange.value));
+
+// ── Light/dark theme toggle ──────────────────────────────────────────────
+(function theme() {
+  const btn = document.getElementById('themeBtn');
+  const saved = localStorage.getItem('cc_theme');
+  const prefersLight = window.matchMedia?.('(prefers-color-scheme: light)').matches;
+  const initial = saved || (prefersLight ? 'light' : 'dark');
+  document.documentElement.classList.toggle('light', initial === 'light');
+  btn?.addEventListener('click', () => {
+    const isLight = document.documentElement.classList.toggle('light');
+    localStorage.setItem('cc_theme', isLight ? 'light' : 'dark');
+  });
+})();
+
+// ── Session search filter ────────────────────────────────────────────────
+const sessionSearch = document.getElementById('sessionSearch');
+let sessionFilter = '';
+sessionSearch?.addEventListener('input', () => {
+  sessionFilter = sessionSearch.value.toLowerCase();
+  renderSessions();
+});
+// Monkey-patch renderSessions to respect the filter.
+const _origRenderSessions = renderSessions;
+renderSessions = function () {
+  if (!sessionsList) return;
+  const visible = sessionFilter
+    ? sessions.filter(s => (s.title || '').toLowerCase().includes(sessionFilter)
+        || (s.messages || []).some(m => typeof m.content === 'string' && m.content.toLowerCase().includes(sessionFilter)))
+    : sessions;
+  if (visible.length === 0) {
+    sessionsList.innerHTML = `<li class="empty">${sessionFilter ? 'No matches' : 'No past chats'}</li>`;
+    return;
+  }
+  sessionsList.innerHTML = visible.slice(0, 30).map(s => `
+    <li class="${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
+      <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
+      <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
+    </li>`).join('');
+};
+renderSessions();
+
+// ── Prompt presets ───────────────────────────────────────────────────────
+const PRESETS = [
+  { id: 'default', name: 'OpenClaw (default)', prompt: 'You are OpenClaw, a powerful, friendly AI assistant. Be concise, accurate, and helpful.' },
+  { id: 'coder', name: 'Coding buddy', prompt: 'You are a senior software engineer. Give complete, runnable code with clear explanations. Prefer idiomatic, production-ready patterns. Include tests when useful.' },
+  { id: 'tutor', name: 'Patient tutor', prompt: 'You are a patient tutor. Break ideas into small steps, ask Socratic questions, and check for understanding before moving on.' },
+  { id: 'copy', name: 'Copywriter', prompt: 'You are a sharp copywriter. Write punchy, clear, benefit-focused prose. Prefer active voice. Offer 2-3 variants when asked.' },
+  { id: 'research', name: 'Research analyst', prompt: 'You are a careful research analyst. When uncertain, say so. Cite sources with URLs. Distinguish fact from inference. Summarize, then dive deep.' },
+  { id: 'therapist', name: 'Empathetic listener', prompt: 'You are a warm, non-judgmental listener. Reflect feelings, validate, and ask gentle follow-ups before offering suggestions.' },
+  { id: 'brainstorm', name: 'Brainstorm partner', prompt: 'You are a lateral-thinking brainstorm partner. Offer many ideas across the quality spectrum. Build on user input. Defer judgment.' },
+  { id: 'chef', name: 'Home chef', prompt: 'You are a friendly home chef. Suggest recipes that match the ingredients and tools available. Explain techniques briefly and practically.' },
+];
+const presetSelect = document.getElementById('presetSelect');
+if (presetSelect) {
+  for (const p of PRESETS) {
+    const opt = document.createElement('option');
+    opt.value = p.id; opt.textContent = p.name;
+    presetSelect.appendChild(opt);
+  }
+  presetSelect.value = localStorage.getItem('cc_preset') || 'default';
+  presetSelect.addEventListener('change', () => {
+    const p = PRESETS.find(x => x.id === presetSelect.value);
+    if (!p) return;
+    systemPrompt.value = p.prompt;
+    systemPrompt.dispatchEvent(new Event('input'));
+    localStorage.setItem('cc_preset', p.id);
+  });
+}
+
+// ── Image attach / paste / drop for vision ───────────────────────────────
+let pendingImages = [];  // [{name, dataUrl}]
+const chipsEl = document.getElementById('attachedChips');
+
+function renderChips() {
+  if (!chipsEl) return;
+  chipsEl.innerHTML = pendingImages.map((im, i) => `
+    <span class="chip">
+      <img src="${escapeAttr(im.dataUrl)}" alt="${escapeAttr(im.name)}">
+      ${escapeHtml(im.name || 'image')}
+      <button type="button" data-rm="${i}" title="Remove">✕</button>
+    </span>`).join('');
+}
+chipsEl?.addEventListener('click', (e) => {
+  const rm = e.target.closest('[data-rm]');
+  if (!rm) return;
+  pendingImages.splice(+rm.dataset.rm, 1);
+  renderChips();
+});
+
+async function handleFiles(fileList) {
+  const arr = Array.from(fileList || []);
+  for (const f of arr) {
+    if (f.type.startsWith('image/')) {
+      const dataUrl = await new Promise((resolve) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.readAsDataURL(f);
+      });
+      pendingImages.push({ name: f.name, dataUrl });
+    } else {
+      pendingFileText = await f.text();
+      userInput.placeholder = `📎 ${f.name} attached — type your question…`;
+    }
+  }
+  renderChips();
+}
+
+// Override attach button behavior to use new multi-file flow.
+fileInput.addEventListener('change', async () => {
+  await handleFiles(fileInput.files);
+  fileInput.value = '';
+}, { capture: true });
+
+// Paste image from clipboard.
+userInput.addEventListener('paste', async (e) => {
+  const items = Array.from(e.clipboardData?.items || []);
+  const images = items.filter(i => i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
+  if (images.length) {
+    e.preventDefault();
+    await handleFiles(images);
+  }
+});
+
+// Drag & drop.
+document.body.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); document.body.classList.add('drop-hover'); }
+});
+document.body.addEventListener('dragleave', () => document.body.classList.remove('drop-hover'));
+document.body.addEventListener('drop', async (e) => {
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  document.body.classList.remove('drop-hover');
+  await handleFiles(e.dataTransfer.files);
+});
+
+// Hook into send: if images are pending, convert the outgoing message to
+// a multimodal content-array and clear the chips. Done by listening before
+// the form submit handler runs — we mutate the textarea and stash images
+// via a window-level side channel read by the submit handler.
+window.__takeOutgoingImages = function () {
+  const out = pendingImages.slice();
+  pendingImages = [];
+  renderChips();
+  return out;
+};
+
+// ── Artifact-style preview panel ─────────────────────────────────────────
+const artifactPanel = document.getElementById('artifactPanel');
+const artifactFrame = document.getElementById('artifactFrame');
+const artifactTitle = document.getElementById('artifactTitle');
+let lastArtifactSrc = '';
+
+function openArtifact(src, title = 'Preview') {
+  if (!artifactPanel || !artifactFrame) return;
+  lastArtifactSrc = src;
+  artifactTitle.textContent = title;
+  artifactFrame.srcdoc = src;
+  artifactPanel.hidden = false;
+}
+document.getElementById('artifactCloseBtn')?.addEventListener('click', () => {
+  if (artifactPanel) { artifactPanel.hidden = true; artifactFrame.srcdoc = ''; }
+});
+document.getElementById('artifactReloadBtn')?.addEventListener('click', () => {
+  if (artifactFrame) artifactFrame.srcdoc = lastArtifactSrc;
+});
+
+// Add a "Preview" button to any HTML/SVG fenced block inside a message.
+function injectArtifactTriggers(root) {
+  if (!root) return;
+  root.querySelectorAll('pre > code').forEach((code) => {
+    const cls = code.className || '';
+    const isHtml = /language-html|language-xml|language-svg/i.test(cls);
+    const isSvg  = /^<svg[\s\S]*<\/svg>/i.test(code.textContent.trim());
+    if (!isHtml && !isSvg) return;
+    const pre = code.parentElement;
+    if (pre.querySelector('.artifact-trigger')) return;
+    const btn = document.createElement('button');
+    btn.className = 'artifact-trigger';
+    btn.textContent = '▶︎ Preview';
+    btn.addEventListener('click', () => {
+      const src = isSvg
+        ? `<!doctype html><meta charset=utf-8><style>body{margin:0;display:grid;place-items:center;min-height:100vh;background:#fff}svg{max-width:95vw;max-height:95vh}</style>${code.textContent}`
+        : code.textContent;
+      openArtifact(src, isSvg ? 'SVG preview' : 'HTML preview');
+    });
+    pre.appendChild(btn);
+  });
+}
+
+// ── Command palette (Ctrl/Cmd+K) ─────────────────────────────────────────
+const paletteOverlay = document.getElementById('paletteOverlay');
+const paletteInput = document.getElementById('paletteInput');
+const paletteResults = document.getElementById('paletteResults');
+let paletteItems = [];
+let paletteSel = 0;
+
+function buildPaletteItems() {
+  const items = [];
+  items.push({ icon: '💬', label: 'New chat', sub: 'Ctrl+N', run: () => newSession() });
+  items.push({ icon: '🌓', label: 'Toggle theme', sub: '', run: () => document.getElementById('themeBtn').click() });
+  items.push({ icon: '🔄', label: 'Clear current chat', sub: '', run: () => clearBtn.click() });
+  items.push({ icon: '↓',  label: 'Export chat as markdown', sub: '', run: () => exportChat() });
+  items.push({ icon: '🎙', label: 'Start voice input', sub: '', run: () => document.getElementById('micBtn')?.click() });
+  for (const m of ['auto', 'agent', 'ask-all']) {
+    items.push({ icon: '🎛', label: `Mode: ${m}`, sub: '', run: () => setChatMode(m) });
+  }
+  for (const [id, p] of Object.entries(providers)) {
+    items.push({ icon: '⚡', label: `Use ${p.name}`, sub: p.configured ? '✓ ready' : (p.keyless ? 'free' : 'needs key'), run: () => { providerSelect.value = id; providerSelect.dispatchEvent(new Event('change')); } });
+  }
+  for (const s of sessions.slice(0, 20)) {
+    items.push({ icon: '💭', label: s.title || 'Untitled', sub: 'chat', run: () => { currentSessionId = s.id; messages = [...(s.messages || [])]; chatMode = s.mode || 'auto'; setChatMode(chatMode); localStorage.setItem('cc_current_session', currentSessionId); replayMessages(); renderSessions(); } });
+  }
+  for (const p of PRESETS) {
+    items.push({ icon: '📝', label: `Preset: ${p.name}`, sub: '', run: () => { if (presetSelect) { presetSelect.value = p.id; presetSelect.dispatchEvent(new Event('change')); } } });
+  }
+  return items;
+}
+
+function renderPalette() {
+  if (!paletteResults) return;
+  const q = paletteInput.value.trim().toLowerCase();
+  const filtered = q
+    ? paletteItems.filter(i => i.label.toLowerCase().includes(q) || (i.sub || '').toLowerCase().includes(q))
+    : paletteItems;
+  paletteSel = Math.min(paletteSel, Math.max(0, filtered.length - 1));
+  paletteResults.innerHTML = filtered.slice(0, 50).map((it, i) => `
+    <li data-i="${i}" class="${i === paletteSel ? 'selected' : ''}">
+      <span class="p-icon">${it.icon}</span>
+      <span>${escapeHtml(it.label)}</span>
+      <span class="p-sub">${escapeHtml(it.sub || '')}</span>
+    </li>`).join('');
+  paletteResults._filtered = filtered;
+}
+
+function openPalette() {
+  paletteItems = buildPaletteItems();
+  paletteInput.value = '';
+  paletteSel = 0;
+  renderPalette();
+  paletteOverlay.hidden = false;
+  setTimeout(() => paletteInput.focus(), 10);
+}
+function closePalette() { paletteOverlay.hidden = true; }
+
+document.getElementById('paletteBtn')?.addEventListener('click', openPalette);
+document.addEventListener('keydown', (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
+  if (!paletteOverlay || paletteOverlay.hidden) return;
+  if (e.key === 'Escape') { e.preventDefault(); closePalette(); return; }
+  const list = paletteResults._filtered || [];
+  if (e.key === 'ArrowDown') { e.preventDefault(); paletteSel = (paletteSel + 1) % Math.max(1, list.length); renderPalette(); }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); paletteSel = (paletteSel - 1 + list.length) % Math.max(1, list.length); renderPalette(); }
+  if (e.key === 'Enter')     { e.preventDefault(); const pick = list[paletteSel]; if (pick) { closePalette(); pick.run(); } }
+});
+paletteInput?.addEventListener('input', () => { paletteSel = 0; renderPalette(); });
+paletteResults?.addEventListener('click', (e) => {
+  const li = e.target.closest('li[data-i]');
+  if (!li) return;
+  const it = (paletteResults._filtered || [])[+li.dataset.i];
+  if (it) { closePalette(); it.run(); }
+});
+paletteOverlay?.addEventListener('click', (e) => { if (e.target === paletteOverlay) closePalette(); });
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 init().then(() => { loadFiles(); loadMemory(); });

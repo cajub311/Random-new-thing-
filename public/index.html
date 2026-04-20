@@ -26,6 +26,7 @@
 
     <div class="sidebar-section" id="sessionsSection">
       <label>Conversations <button class="icon-btn mini" id="exportChatBtn" title="Export current chat as markdown">↓</button></label>
+      <input type="search" id="sessionSearch" class="session-search" placeholder="Search chats…" autocomplete="off" />
       <ul id="sessionsList" class="sessions-list"></ul>
     </div>
 
@@ -59,8 +60,8 @@
     </div>
 
     <div class="sidebar-section">
-      <label>System Prompt</label>
-      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are CloudClaw, a powerful, friendly AI assistant running entirely in the free cloud. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time) to complete tasks.</textarea>
+      <label>System Prompt <select id="presetSelect" class="preset-select" title="Prompt presets"></select></label>
+      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant…">You are OpenClaw, a powerful, friendly AI assistant. Be concise, accurate, and helpful. When in Agent mode you may use tools (web_search, fetch_url, create_file, draft_email, generate_image, calculate, current_time, remember, recall) to complete tasks.</textarea>
     </div>
 
     <div class="sidebar-section" id="filesSection">
@@ -112,6 +113,8 @@
       <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">☰</button>
       <span class="topbar-title">OpenClaw</span>
       <span class="provider-pill" id="activePill"></span>
+      <button class="icon-btn" id="paletteBtn" title="Command palette (Ctrl+K)">⌘K</button>
+      <button class="icon-btn" id="themeBtn" title="Toggle light/dark">🌓</button>
       <button class="icon-btn" id="clearBtn" title="Clear chat">🗑</button>
     </header>
 
@@ -134,12 +137,13 @@
     </div>
 
     <form class="input-area" id="chatForm">
-      <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach file">📎</button>
-      <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.js,.py,.html,.css,.json,.csv,image/*" />
+      <div id="attachedChips" class="attached-chips"></div>
+      <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach file or image">📎</button>
+      <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.js,.py,.html,.css,.json,.csv,image/*" multiple />
       <button type="button" class="icon-btn mic-btn" id="micBtn" title="Voice input (hold or click)" hidden>🎙</button>
       <textarea
         id="userInput"
-        placeholder="Ask anything… (Shift+Enter for new line, type / for commands)"
+        placeholder="Ask anything, paste images, drop files… (Shift+Enter for new line)"
         rows="1"
         autocomplete="off"
       ></textarea>
@@ -151,8 +155,29 @@
       </button>
     </form>
 
-    <p class="disclaimer">Free AI APIs may have rate limits. CloudClaw never stores your messages or API keys.</p>
+    <p class="disclaimer">Free AI APIs may have rate limits. OpenClaw stores chats locally in your browser and never transmits your keys anywhere except the chosen provider.</p>
   </main>
+
+  <!-- ── Artifact preview (HTML/SVG sandbox) ─────────────────── -->
+  <aside class="artifact-panel" id="artifactPanel" hidden>
+    <header class="artifact-header">
+      <span class="artifact-title" id="artifactTitle">Preview</span>
+      <div class="artifact-actions">
+        <button class="icon-btn mini" id="artifactReloadBtn" title="Reload">↻</button>
+        <button class="icon-btn mini" id="artifactCloseBtn" title="Close">✕</button>
+      </div>
+    </header>
+    <iframe id="artifactFrame" sandbox="allow-scripts" title="Artifact preview"></iframe>
+  </aside>
+
+  <!-- ── Command palette ─────────────────────────────────────── -->
+  <div class="palette-overlay" id="paletteOverlay" hidden>
+    <div class="palette">
+      <input type="text" id="paletteInput" class="palette-input" placeholder="Type a command, chat name, or provider…" autocomplete="off" />
+      <ul id="paletteResults" class="palette-results"></ul>
+      <div class="palette-hint">↑↓ navigate · ↵ run · Esc close</div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
