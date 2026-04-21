@@ -713,16 +713,20 @@ chatForm.addEventListener('submit', async e => {
 
 // ── Slash commands ─────────────────────────────────────────────────────────
 const SLASH_COMMANDS = [
-  { cmd: '/clear',  desc: 'Clear the current conversation' },
-  { cmd: '/new',    desc: 'Start a new conversation' },
-  { cmd: '/export', desc: 'Download this conversation as markdown' },
-  { cmd: '/chat',   desc: 'Switch to chat mode' },
-  { cmd: '/agent',  desc: 'Switch to agent mode (tools)' },
-  { cmd: '/askall', desc: 'Switch to ask-all mode' },
-  { cmd: '/image ', desc: 'Agent: generate an image from a prompt' },
-  { cmd: '/search ',desc: 'Agent: web search + summary' },
-  { cmd: '/file ',  desc: 'Agent: create a text file' },
-  { cmd: '/help',   desc: 'Show this list' },
+  { cmd: '/clear',    desc: 'Clear the current conversation' },
+  { cmd: '/new',      desc: 'Start a new conversation' },
+  { cmd: '/export',   desc: 'Download this conversation as markdown' },
+  { cmd: '/chat',     desc: 'Switch to chat mode' },
+  { cmd: '/agent',    desc: 'Switch to agent mode (tools)' },
+  { cmd: '/askall',   desc: 'Switch to ask-all mode' },
+  { cmd: '/image ',   desc: 'Agent: generate an image from a prompt' },
+  { cmd: '/search ',  desc: 'Agent: web search + summary' },
+  { cmd: '/file ',    desc: 'Agent: create a text file' },
+  { cmd: '/weather ', desc: 'Agent: current weather for a place' },
+  { cmd: '/summarize ', desc: 'Agent: summarize a URL or pasted text' },
+  { cmd: '/remember ',desc: 'Save a durable fact to memory' },
+  { cmd: '/recall ',  desc: 'Look up facts from memory' },
+  { cmd: '/help',     desc: 'Show this list' },
 ];
 
 function handleSlashCommand(text) {
@@ -754,6 +758,28 @@ function handleSlashCommand(text) {
     case '/file': {
       setChatMode('agent');
       userInput.value = `Create a file. ${arg}`;
+      return false;
+    }
+    case '/weather': {
+      setChatMode('agent');
+      userInput.value = `What's the weather in ${arg || 'my area'}? Use the weather tool.`;
+      return false;
+    }
+    case '/summarize': {
+      setChatMode('agent');
+      userInput.value = /^https?:\/\//.test(arg)
+        ? `Fetch ${arg} and summarize the key points in a short bulleted list.`
+        : `Summarize this, using summarize_text if it's long: ${arg}`;
+      return false;
+    }
+    case '/remember': {
+      setChatMode('agent');
+      userInput.value = `Remember this: ${arg}`;
+      return false;
+    }
+    case '/recall': {
+      setChatMode('agent');
+      userInput.value = `Recall anything you know about: ${arg}. If nothing relevant, say so.`;
       return false;
     }
     default: return false;

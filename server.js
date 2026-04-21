@@ -13,8 +13,8 @@ import 'dotenv/config';
 import { PROVIDERS, DEFAULT_ORDER } from './lib/providers.js';
 import { chatCompletion, callOpenAI, probeLocal } from './lib/llm.js';
 import { loadSkills } from './skills/index.js';
-import { runAgent, SYSTEM_PROMPT, buildMemoryBrief } from './lib/brain.js';
-import { createMemory } from './lib/memory.js';
+import { runAgent, SYSTEM_PROMPT, buildMemoryBrief, appendCitationsIfMissing } from './lib/brain.js';
+import { createMemory, extractAndRememberFacts } from './lib/memory.js';
 import { logger, makeRequestId } from './lib/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -211,6 +211,9 @@ app.post('/api/chat/stream', async (req, res) => {
   try {
     const userMsgs = rawMessages.filter(m => m.role === 'user' && typeof m.content === 'string');
     if (userMsgs.length) {
+      // Fire-and-forget auto-memory capture on the most recent user turn.
+      extractAndRememberFacts(memory, userMsgs[userMsgs.length - 1].content)
+        .catch(e => req.log.warn('auto-memory failed', { err: e.message }));
       const brief = await buildMemoryBrief(memory, userMsgs, 5);
       if (brief) {
         const existingSystem = rawMessages.find(m => m.role === 'system');
@@ -368,6 +371,14 @@ async function prepareAgentRun(req, res) {
     systemContent += `\n\nThe user's message contains these URLs. Before answering, call fetch_url on each one so your reply is grounded in the actual page contents (not your prior training): ${urls.join(' ')}`;
   }
 
+  // Auto-capture durable self-declarations from the latest user message so
+  // the assistant remembers them without the user having to say "remember".
+  if (lastUser) {
+    extractAndRememberFacts(memory, lastUser.content)
+      .then(saved => { if (saved.length) req.log.info('auto-memory saved', { count: saved.length }); })
+      .catch(e => req.log.warn('auto-memory failed', { err: e.message }));
+  }
+
   const baseMessages = [
     { role: 'system', content: systemContent },
     ...userMsgs,
@@ -418,7 +429,7 @@ app.post('/api/agent', async (req, res) => {
 
     req.log.info('agent done', { steps: result.steps, provider: cfg.providerId });
     res.json({
-      reply: result.reply,
+      reply: appendCitationsIfMissing(result.reply, result.trace),
       provider: cfg.provider.name,
       model: cfg.model || cfg.provider.defaultModel,
       steps: result.steps,
@@ -484,7 +495,7 @@ app.post('/api/agent/stream', async (req, res) => {
     if (closed) return;
     req.log.info('agent stream done', { steps: result.steps, provider: cfg.providerId });
     send('done', {
-      reply: result.reply,
+      reply: appendCitationsIfMissing(result.reply, result.trace),
       provider: cfg.provider.name,
       model: cfg.model || cfg.provider.defaultModel,
       steps: result.steps,
