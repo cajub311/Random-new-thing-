@@ -86,13 +86,15 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ── Trust / privacy strip (shared markup for welcome + sidebar) ───────────
+const SOURCE_REPO_URL = 'https://github.com/openclaw/openclaw';
+
 const TRUST_STRIP_HTML = `
   <section class="trust-strip" aria-label="Trust and privacy">
     <div class="trust-strip-inner">
-      <div class="trust-card" title="Inspect and self-host the code">
+      <a class="trust-card trust-card-link" href="${SOURCE_REPO_URL}" target="_blank" rel="noopener noreferrer" title="View source on GitHub">
         <span class="trust-card-icon" aria-hidden="true">📖</span>
         <span class="trust-card-text">100% Open Source</span>
-      </div>
+      </a>
       <div class="trust-card" title="Local models keep chats on your device">
         <span class="trust-card-icon" aria-hidden="true">🔒</span>
         <span class="trust-card-text">Private by default (local-first)</span>
@@ -1934,7 +1936,7 @@ let paletteSel = 0;
 
 function buildPaletteItems() {
   const items = [];
-  items.push({ icon: '💬', label: 'New chat', sub: 'Ctrl+N', run: () => newSession() });
+  items.push({ icon: '💬', label: 'New chat', sub: '⌘/Ctrl+N', run: () => newSession() });
   items.push({ icon: '☰', label: 'Toggle settings sidebar', sub: '', run: () => { sidebarToggle?.click(); } });
   items.push({ icon: '🌓', label: 'Toggle theme', sub: '', run: () => document.getElementById('themeBtn').click() });
   items.push({ icon: '🔄', label: 'Clear current chat', sub: '', run: () => clearBtn.click() });
@@ -1963,8 +1965,8 @@ function renderPalette() {
     : paletteItems;
   paletteSel = Math.min(paletteSel, Math.max(0, filtered.length - 1));
   paletteResults.innerHTML = filtered.slice(0, 50).map((it, i) => `
-    <li data-i="${i}" class="${i === paletteSel ? 'selected' : ''}">
-      <span class="p-icon">${it.icon}</span>
+    <li role="option" aria-selected="${i === paletteSel ? 'true' : 'false'}" data-i="${i}" class="${i === paletteSel ? 'selected' : ''}" tabindex="${i === paletteSel ? '0' : '-1'}">
+      <span class="p-icon" aria-hidden="true">${it.icon}</span>
       <span>${escapeHtml(it.label)}</span>
       <span class="p-sub">${escapeHtml(it.sub || '')}</span>
     </li>`).join('');
@@ -1977,13 +1979,25 @@ function openPalette() {
   paletteSel = 0;
   renderPalette();
   paletteOverlay.hidden = false;
+  paletteOverlay.setAttribute('aria-hidden', 'false');
   setTimeout(() => paletteInput.focus(), 10);
 }
-function closePalette() { paletteOverlay.hidden = true; }
+function closePalette() {
+  if (!paletteOverlay) return;
+  paletteOverlay.hidden = true;
+  paletteOverlay.setAttribute('aria-hidden', 'true');
+}
 
 document.getElementById('paletteBtn')?.addEventListener('click', openPalette);
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 'n' && paletteOverlay?.hidden) {
+    const inSidebarField = e.target?.closest?.('#sidebar') && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+    if (inSidebarField) return;
+    e.preventDefault();
+    newSession();
+    return;
+  }
   if (mod && e.key.toLowerCase() === 'k') {
     e.preventDefault();
     if (paletteOverlay && !paletteOverlay.hidden) closePalette();

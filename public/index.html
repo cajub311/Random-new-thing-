@@ -60,10 +60,10 @@
 
     <div class="sidebar-section" id="localProvidersSection">
       <label class="local-providers-label">
-        <input type="checkbox" id="showLocalProviders" />
+        <input type="checkbox" id="showLocalProviders" aria-describedby="localProvidersHint" />
         Show local backends (Ollama, LM Studio, llama.cpp)
       </label>
-      <p class="local-providers-hint">Off by default — no auto-fallback to localhost. Turn on only if you run a local LLM; then pick it like any other provider.</p>
+      <p class="local-providers-hint" id="localProvidersHint">Off by default — no auto-fallback to localhost. Turn on only if you run a local LLM; then pick it like any other provider.</p>
     </div>
 
     <div class="sidebar-section">
@@ -112,19 +112,19 @@
     </div>
 
     <div class="sidebar-section" id="syncSection">
-      <label>
+      <label for="ghTokenInput">
         Cloud Backup
-        <span id="syncStatus" class="sync-status">off</span>
+        <span id="syncStatus" class="sync-status" aria-live="polite">off</span>
       </label>
       <details>
         <summary>GitHub Gist sync</summary>
         <p class="sync-help">Back up chats &amp; memory to a private Gist so they survive across devices and redeploys. Token needs the <code>gist</code> scope only.</p>
-        <input type="password" id="ghTokenInput" placeholder="GitHub token (ghp_…)" autocomplete="off" />
-        <input type="text" id="ghGistInput" placeholder="Gist ID (leave blank to create)" autocomplete="off" />
+        <input type="password" id="ghTokenInput" placeholder="GitHub token (ghp_…)" autocomplete="off" aria-label="GitHub personal access token with gist scope" />
+        <input type="text" id="ghGistInput" placeholder="Gist ID (leave blank to create)" autocomplete="off" aria-label="Existing Gist ID for backup, or leave blank to create" />
         <div class="sync-row">
-          <button class="icon-btn mini" id="syncPushBtn" title="Push local data to Gist">↑ Push</button>
-          <button class="icon-btn mini" id="syncPullBtn" title="Pull data from Gist">↓ Pull</button>
-          <button class="icon-btn mini" id="syncAutoBtn" title="Toggle auto-sync after every change">⟲ Auto</button>
+          <button type="button" class="icon-btn mini" id="syncPushBtn" title="Push local data to Gist" aria-label="Push local chats and memory to GitHub Gist">↑ Push</button>
+          <button type="button" class="icon-btn mini" id="syncPullBtn" title="Pull data from Gist" aria-label="Pull chats and memory from GitHub Gist">↓ Pull</button>
+          <button type="button" class="icon-btn mini" id="syncAutoBtn" title="Toggle auto-sync after every change" aria-label="Toggle automatic sync after changes">⟲ Auto</button>
         </div>
       </details>
     </div>
@@ -147,7 +147,7 @@
           <button type="button" class="topbar-mode-btn" data-mode="agent" title="Agent mode" aria-pressed="false" aria-label="Agent mode with tools">🤖</button>
           <button type="button" class="topbar-mode-btn" data-mode="ask-all" title="Ask all providers" aria-pressed="false" aria-label="Ask all configured providers">✦</button>
         </div>
-        <button type="button" class="icon-btn" id="paletteBtn" title="Command palette (Ctrl+K)" aria-label="Open command palette">⌘K</button>
+        <button type="button" class="icon-btn" id="paletteBtn" title="Command palette (⌘/Ctrl+K)" aria-label="Open command palette">⌘K</button>
         <button type="button" class="icon-btn" id="themeBtn" title="Toggle light/dark" aria-label="Toggle light and dark theme">🌓</button>
         <a class="topbar-github" href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener noreferrer" aria-label="OpenClaw source on GitHub">🐙 Source on GitHub</a>
         <button type="button" class="icon-btn" id="clearBtn" title="Clear chat" aria-label="Clear conversation">🗑</button>
@@ -209,19 +209,20 @@
     <header class="artifact-header">
       <span class="artifact-title" id="artifactTitle">Preview</span>
       <div class="artifact-actions">
-        <button class="icon-btn mini" id="artifactReloadBtn" title="Reload">↻</button>
-        <button class="icon-btn mini" id="artifactCloseBtn" title="Close">✕</button>
+        <button type="button" class="icon-btn mini" id="artifactReloadBtn" title="Reload preview" aria-label="Reload artifact preview">↻</button>
+        <button type="button" class="icon-btn mini" id="artifactCloseBtn" title="Close preview" aria-label="Close artifact preview">✕</button>
       </div>
     </header>
     <iframe id="artifactFrame" sandbox="allow-scripts" title="Artifact preview"></iframe>
   </aside>
 
   <!-- ── Command palette ─────────────────────────────────────── -->
-  <div class="palette-overlay" id="paletteOverlay" hidden>
+  <div class="palette-overlay" id="paletteOverlay" role="dialog" aria-modal="true" aria-labelledby="paletteTitle" aria-hidden="true" hidden>
     <div class="palette">
-      <input type="text" id="paletteInput" class="palette-input" placeholder="Type a command, chat name, or provider…" autocomplete="off" />
-      <ul id="paletteResults" class="palette-results"></ul>
-      <div class="palette-hint">↑↓ navigate · ↵ run · Esc close · <span class="palette-hint-kbd">⌘/Ctrl+Enter</span> send from anywhere</div>
+      <h2 class="visually-hidden" id="paletteTitle">Command palette</h2>
+      <input type="text" id="paletteInput" class="palette-input" placeholder="Type a command, chat name, or provider…" autocomplete="off" aria-label="Search command palette" aria-controls="paletteResults" />
+      <ul id="paletteResults" class="palette-results" role="listbox" aria-label="Matching actions"></ul>
+      <div class="palette-hint">↑↓ navigate · ↵ run · Esc close · <span class="palette-hint-kbd">⌘/Ctrl+N</span> new chat · <span class="palette-hint-kbd">⌘/Ctrl+Enter</span> send (when closed)</div>
     </div>
   </div>
 

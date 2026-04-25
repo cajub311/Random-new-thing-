@@ -390,6 +390,18 @@ input[type="range"]:hover::-moz-range-thumb {
   border-color: rgba(108, 99, 255, 0.45);
   background: var(--surface);
 }
+a.trust-card-link {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+a.trust-card-link:hover .trust-card-text {
+  color: var(--accent2);
+}
+a.trust-card-link:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+}
 .trust-card-icon {
   font-size: 1rem;
   line-height: 1;
