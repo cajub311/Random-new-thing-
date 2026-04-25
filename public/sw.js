@@ -1,12 +1,9 @@
-// OpenClaw service worker — shell-cache for offline boot.
-// Strategy: cache-first for static shell assets, network-first (no cache)
-// for /api/* so AI calls always hit the live backend.
+// OpenClaw service worker — offline-friendly without stale “shell” blocking updates.
+// Network-first for HTML + JS + CSS so deploys reach users immediately; fall back to cache when offline.
 
-const CACHE = 'openclaw-shell-v2';
-const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/manifest.webmanifest'];
+const CACHE = 'openclaw-shell-v3';
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}));
   self.skipWaiting();
 });
 
@@ -19,30 +16,37 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+function isShellAsset(pathname) {
+  return (
+    pathname === '/' ||
+    pathname === '/index.html' ||
+    pathname === '/app.js' ||
+    pathname === '/style.css' ||
+    pathname === '/manifest.webmanifest'
+  );
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  // Never cache API traffic or cross-origin CDN.
   if (url.pathname.startsWith('/api/') || url.origin !== self.location.origin) return;
 
+  // Only handle shell assets; let the browser handle everything else.
+  if (!isShellAsset(url.pathname)) return;
+
   event.respondWith(
-    caches.match(req).then((hit) => {
-      if (hit) {
-        // Refresh in background.
-        fetch(req).then((res) => {
-          if (res && res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
-        }).catch(() => {});
-        return hit;
-      }
-      return fetch(req).then((res) => {
-        if (res && res.ok) {
+    fetch(req)
+      .then((res) => {
+        if (res && res.ok && isShellAsset(url.pathname)) {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         }
         return res;
-      }).catch(() => caches.match('/index.html'));
-    })
+      })
+      .catch(() =>
+        caches.match(req).then((hit) => hit || (url.pathname !== '/' && url.pathname !== '/index.html' ? undefined : caches.match('/index.html')))
+      )
   );
 });

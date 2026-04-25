@@ -126,7 +126,11 @@ async function init() {
   closePalette();
   const ap = document.getElementById('artifactPanel');
   const af = document.getElementById('artifactFrame');
-  if (ap) { ap.hidden = true; if (af) af.srcdoc = ''; }
+  if (ap) {
+    ap.hidden = true;
+    ap.style.display = 'none';
+    if (af) af.srcdoc = '';
+  }
   loadSettings();
   loadSessions();
   try {
@@ -1090,7 +1094,9 @@ refreshSyncStatus();
 // ── PWA: register service worker ──────────────────────────────────────────
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/sw.js')
+      .then((reg) => reg.update?.())
+      .catch(() => {});
   });
 }
 
@@ -1904,9 +1910,14 @@ function openArtifact(src, title = 'Preview') {
   artifactTitle.textContent = title;
   artifactFrame.srcdoc = src;
   artifactPanel.hidden = false;
+  artifactPanel.style.display = '';
 }
 document.getElementById('artifactCloseBtn')?.addEventListener('click', () => {
-  if (artifactPanel) { artifactPanel.hidden = true; artifactFrame.srcdoc = ''; }
+  if (artifactPanel) {
+    artifactPanel.hidden = true;
+    artifactPanel.style.display = 'none';
+    if (artifactFrame) artifactFrame.srcdoc = '';
+  }
 });
 document.getElementById('artifactReloadBtn')?.addEventListener('click', () => {
   if (artifactFrame) artifactFrame.srcdoc = lastArtifactSrc;
@@ -2009,12 +2020,14 @@ function openPalette() {
   paletteSel = 0;
   renderPalette();
   paletteOverlay.hidden = false;
+  paletteOverlay.style.display = '';
   paletteOverlay.setAttribute('aria-hidden', 'false');
   setTimeout(() => paletteInput.focus(), 10);
 }
 function closePalette() {
   if (!paletteOverlay) return;
   paletteOverlay.hidden = true;
+  paletteOverlay.style.display = 'none';
   paletteOverlay.setAttribute('aria-hidden', 'true');
   const prev = paletteFocusBefore;
   paletteFocusBefore = null;
