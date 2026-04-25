@@ -1,4 +1,4 @@
-/* ── CloudClaw frontend app ──────────────────────────────────────────── */
+/* ── OpenClaw frontend app ─────────────────────────────────────────────── */
 
 const API = '';  // same-origin; set full URL if backend is separate
 
@@ -165,12 +165,22 @@ function buildProviderUI() {
       <div class="card-name">${escapeHtml(p.name)}</div>
       <div class="card-tag">${tag}</div>
       ${p.description ? `<div class="card-desc">${escapeHtml(p.description)}</div>` : ''}`;
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', `Select provider ${p.name}`);
     card.addEventListener('click', () => {
       if (p.local && !p.configured) return;
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
       sidebar.classList.remove('collapsed');
       sidebar.classList.add('open');
+      syncSidebarAria();
+    });
+    card.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        card.click();
+      }
     });
     providerCards.appendChild(card);
   }
@@ -281,13 +291,46 @@ modeToggle.addEventListener('click', e => {
   if (!btn) return;
   setChatMode(btn.dataset.mode);
 });
+
+document.getElementById('topbarModeToggle')?.addEventListener('click', e => {
+  const btn = e.target.closest('.topbar-mode-btn');
+  if (!btn) return;
+  setChatMode(btn.dataset.mode);
+});
 function setChatMode(mode) {
   chatMode = mode;
   modeToggle.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  document.querySelectorAll('#topbarModeToggle .topbar-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  syncModeButtonsAriaPressed();
+  syncTopbarModeAriaPressed();
   modeHint.textContent = MODE_HINTS[mode] || '';
   updateStatus();
   localStorage.setItem('cc_mode', mode);
   if (mode === 'agent') loadFiles();
+}
+
+function syncModeButtonsAriaPressed() {
+  modeToggle.querySelectorAll('.mode-btn').forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.mode === chatMode ? 'true' : 'false');
+  });
+}
+
+function syncTopbarModeAriaPressed() {
+  document.querySelectorAll('#topbarModeToggle .topbar-mode-btn').forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.mode === chatMode ? 'true' : 'false');
+  });
+}
+
+function isSidebarExpanded() {
+  const mobile = window.matchMedia('(max-width: 640px)').matches;
+  if (mobile) return sidebar.classList.contains('open');
+  return !sidebar.classList.contains('collapsed');
+}
+
+function syncSidebarAria() {
+  if (!sidebarToggle) return;
+  const expanded = isSidebarExpanded();
+  sidebarToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 }
 
 // ── Available providers helper ─────────────────────────────────────────────
@@ -795,7 +838,7 @@ userInput.addEventListener('input', () => {
     if (matches.length) {
       slashMenu.hidden = false;
       slashMenu.innerHTML = matches.map(m =>
-        `<div class="slash-item" data-cmd="${m.cmd}"><code>${m.cmd}</code><span>${escapeHtml(m.desc)}</span></div>`
+        `<div class="slash-item" role="option" tabindex="0" data-cmd="${escapeAttr(m.cmd)}" aria-label="Insert slash command ${escapeAttr(m.cmd.trim())}: ${escapeAttr(m.desc)}"><code>${m.cmd}</code><span>${escapeHtml(m.desc)}</span></div>`
       ).join('');
       return;
     }
@@ -803,15 +846,26 @@ userInput.addEventListener('input', () => {
   slashMenu.hidden = true;
 });
 
-slashMenu.addEventListener('click', e => {
-  const item = e.target.closest('.slash-item');
-  if (!item) return;
+function pickSlashItem(item) {
   userInput.value = item.dataset.cmd;
   slashMenu.hidden = true;
   userInput.focus();
   if (!item.dataset.cmd.endsWith(' ')) {
     chatForm.dispatchEvent(new Event('submit'));
   }
+}
+
+slashMenu.addEventListener('click', e => {
+  const item = e.target.closest('.slash-item');
+  if (!item) return;
+  pickSlashItem(item);
+});
+
+slashMenu.addEventListener('keydown', e => {
+  const item = e.target.closest('.slash-item');
+  if (!item || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  pickSlashItem(item);
 });
 
 // ── UI controls ────────────────────────────────────────────────────────────
@@ -827,12 +881,16 @@ newChatBtn.addEventListener('click', () => newSession());
 sidebarToggle.addEventListener('click', () => {
   sidebar.classList.toggle('collapsed');
   sidebar.classList.toggle('open');
+  syncSidebarAria();
 });
 
 document.getElementById('sidebarClose')?.addEventListener('click', () => {
   sidebar.classList.remove('open');
   sidebar.classList.add('collapsed');
+  syncSidebarAria();
 });
+
+window.addEventListener('resize', () => syncSidebarAria());
 
 // ── Voice input (Web Speech API) ──────────────────────────────────────────
 (() => {
@@ -1034,9 +1092,9 @@ stopBtn.addEventListener('click', () => {
 });
 
 userInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
-    chatForm.dispatchEvent(new Event('submit'));
+    chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
   }
   if (e.key === 'Escape') {
     slashMenu.hidden = true;
@@ -1045,13 +1103,6 @@ userInput.addEventListener('keydown', e => {
 });
 
 attachBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', async () => {
-  const file = fileInput.files[0];
-  if (!file) return;
-  pendingFileText = await file.text();
-  userInput.placeholder = `📎 ${file.name} attached — type your question…`;
-  fileInput.value = '';
-});
 
 exportChatBtn.addEventListener('click', exportChat);
 
@@ -1066,13 +1117,13 @@ function showWelcome() {
       <p>Free, open-source AI assistant. Uses the keyless Pollinations cloud by default; add API keys (e.g. Groq) for faster models.</p>
       <div data-trust-strip></div>
       <div class="provider-cards" id="providerCardsWelcome"></div>
-      <div class="quick-prompts">
-        <button class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories.">🔎 Search web + summarize</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today.">📝 Create a file</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue.">✉️ Draft an email</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style.">🎨 Generate an image</button>
-        <button class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest.">🧮 Do a calculation</button>
-        <button class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old.">💡 Explain something</button>
+      <div class="quick-prompts" role="group" aria-label="Example prompts">
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Search the web for the latest news about AI and summarize the top 3 stories." aria-label="Example: search the web and summarize AI news">🔎 Search web + summarize</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Create a file called notes.md with a short markdown checklist of 5 things to do today." aria-label="Example: create a checklist file">📝 Create a file</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Draft a short friendly email to support@example.com asking about a billing issue." aria-label="Example: draft a support email">✉️ Draft an email</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Generate an image of a cozy cabin in the snowy mountains at sunset, painterly style." aria-label="Example: generate a painterly cabin image">🎨 Generate an image</button>
+        <button type="button" class="quick-prompt" data-mode="agent" data-prompt="Calculate the monthly payment on a 30-year mortgage of 350000 at 6.5% interest." aria-label="Example: mortgage payment calculation">🧮 Do a calculation</button>
+        <button type="button" class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old." aria-label="Example: simple quantum computing explanation">💡 Explain something</button>
       </div>
       <p class="tip"><strong>🎉 No API key required</strong> to start — Pollinations works out of the box. Paste a Groq key in the sidebar for much faster chat and agent runs. Type <code>/help</code> for commands.</p>
     </div>`;
@@ -1083,12 +1134,22 @@ function showWelcome() {
     const card = document.createElement('div');
     const connected = getAvailableProviders().some(a => a.id === id);
     card.className = 'provider-card' + (connected ? ' configured' : '');
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', `Select provider ${p.name}`);
     card.innerHTML = `<div class="card-name">${escapeHtml(p.name)}</div><div class="card-tag">${connected ? '✓ Connected' : 'FREE tier'}</div>`;
     card.addEventListener('click', () => {
       providerSelect.value = id;
       providerSelect.dispatchEvent(new Event('change'));
       sidebar.classList.remove('collapsed');
       sidebar.classList.add('open');
+      syncSidebarAria();
+    });
+    card.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        card.click();
+      }
     });
     cards.appendChild(card);
   }
@@ -1107,8 +1168,8 @@ function appendAssistantShell(providerId = null) {
     </div>
     <div class="msg-bubble"></div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
-      <button class="msg-action-btn retry-btn">Retry</button>
+      <button type="button" class="msg-action-btn copy-btn" aria-label="Copy assistant message to clipboard">Copy</button>
+      <button type="button" class="msg-action-btn retry-btn" aria-label="Retry this assistant response">Retry</button>
     </div>`;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -1147,10 +1208,10 @@ function appendMessage(role, content, isError = false, providerId = null, isAskA
     </div>
     <div class="msg-bubble${isError ? ' error-bubble' : ''}">${imgHtml}${renderMarkdown(text)}</div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
-      ${role === 'user' && images.length === 0 ? '<button class="msg-action-btn edit-btn" title="Edit and resend">Edit</button>' : ''}
-      ${role === 'assistant' ? '<button class="msg-action-btn speak-btn" title="Read aloud">🔊</button>' : ''}
-      ${role === 'assistant' && !isAskAll ? '<button class="msg-action-btn retry-btn">Retry</button>' : ''}
+      <button type="button" class="msg-action-btn copy-btn" aria-label="${role === 'user' ? 'Copy your message to clipboard' : 'Copy assistant message to clipboard'}">Copy</button>
+      ${role === 'user' && images.length === 0 ? '<button type="button" class="msg-action-btn edit-btn" title="Edit and resend" aria-label="Edit and resend this message">Edit</button>' : ''}
+      ${role === 'assistant' ? '<button type="button" class="msg-action-btn speak-btn" title="Read aloud" aria-label="Read message aloud">🔊</button>' : ''}
+      ${role === 'assistant' && !isAskAll ? '<button type="button" class="msg-action-btn retry-btn" aria-label="Retry this assistant response">Retry</button>' : ''}
     </div>`;
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
   wireMessageActions(div, text);
@@ -1265,8 +1326,10 @@ function enhanceCodeBlocks(root) {
       try { hljs.highlightElement(code); } catch {}
     }
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'copy-code-btn';
     btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code block to clipboard');
     btn.addEventListener('click', () => {
       navigator.clipboard.writeText(code?.textContent || pre.textContent);
       btn.textContent = 'Copied!';
@@ -1299,7 +1362,7 @@ function appendAgentMessage(providerId, data) {
     ${traceHtml}
     <div class="msg-bubble">${renderMarkdown(data.reply || '(no reply)')}</div>
     <div class="msg-actions">
-      <button class="msg-action-btn copy-btn">Copy</button>
+      <button type="button" class="msg-action-btn copy-btn" aria-label="Copy assistant message to clipboard">Copy</button>
     </div>`;
 
   enhanceCodeBlocks(div.querySelector('.msg-bubble'));
@@ -1366,7 +1429,7 @@ async function loadFiles() {
       return;
     }
     filesList.innerHTML = data.files.map(f =>
-      `<li><a href="${escapeAttr(f.url)}" download>${escapeHtml(f.name)}</a> <span class="file-size">${f.bytes}B</span></li>`
+      `<li><a href="${escapeAttr(f.url)}" download aria-label="Download ${escapeAttr(f.name)}">${escapeHtml(f.name)}</a> <span class="file-size">${f.bytes}B</span></li>`
     ).join('');
   } catch {
     filesList.innerHTML = '<li class="empty">Could not load</li>';
@@ -1388,7 +1451,7 @@ function renderMemoryList(entries) {
       <div class="mem-meta">
         ${(e.tags || []).map(t => `<span class="mem-tag">${escapeHtml(t)}</span>`).join('')}
         ${e.importance >= 3 ? '<span class="mem-imp">★</span>' : ''}
-        <button class="icon-btn mini mem-del" data-del="${escapeAttr(e.id)}" title="Forget">×</button>
+        <button type="button" class="icon-btn mini mem-del" data-del="${escapeAttr(e.id)}" title="Forget" aria-label="Forget this memory">×</button>
       </div>
     </li>`).join('');
 }
@@ -1581,7 +1644,7 @@ function renderSessions() {
     <li class="${s.id === currentSessionId ? 'active' : ''}${s.pinned ? ' pinned' : ''}" data-id="${s.id}">
       <button class="icon-btn mini session-pin" data-pin="${s.id}" title="${s.pinned ? 'Unpin' : 'Pin'}">${s.pinned ? '★' : '☆'}</button>
       <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
-      <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
+      <button type="button" class="icon-btn mini session-del" data-del="${s.id}" title="Delete" aria-label="Delete conversation ${escapeAttr(s.title || 'Untitled')}">×</button>
     </li>`).join('');
 }
 
@@ -1624,9 +1687,9 @@ sessionsList?.addEventListener('click', e => {
 function exportChat() {
   if (messages.length === 0) return;
   const title = sessionTitle(messages);
-  const md = `# ${title}\n\n*Exported from CloudClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
+  const md = `# ${title}\n\n*Exported from OpenClaw — ${new Date().toLocaleString()}*\n\n---\n\n` +
     messages.map(m => {
-      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**CloudClaw**' : `**${m.role}**`;
+      const who = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**OpenClaw**' : `**${m.role}**`;
       return `### ${who}\n\n${m.content}\n`;
     }).join('\n');
   const blob = new Blob([md], { type: 'text/markdown' });
@@ -1655,6 +1718,8 @@ function loadSettings() {
   if (showLocalProviders) {
     showLocalProviders.checked = localStorage.getItem('cc_show_local_providers') === '1';
   }
+  syncModeButtonsAriaPressed();
+  syncTopbarModeAriaPressed();
 }
 
 systemPrompt.addEventListener('input', () => localStorage.setItem('cc_system', systemPrompt.value));
@@ -1705,9 +1770,9 @@ renderSessions = function () {
   }
   sessionsList.innerHTML = sortedSessions(visible).slice(0, 30).map(s => `
     <li class="${s.id === currentSessionId ? 'active' : ''}${s.pinned ? ' pinned' : ''}" data-id="${s.id}">
-      <button class="icon-btn mini session-pin" data-pin="${s.id}" title="${s.pinned ? 'Unpin' : 'Pin'}">${s.pinned ? '★' : '☆'}</button>
+      <button type="button" class="icon-btn mini session-pin" data-pin="${s.id}" title="${s.pinned ? 'Unpin' : 'Pin'}" aria-label="${s.pinned ? 'Unpin' : 'Pin'} conversation ${escapeAttr(s.title || 'Untitled')}">${s.pinned ? '★' : '☆'}</button>
       <span class="session-title">${escapeHtml(s.title || 'Untitled')}</span>
-      <button class="icon-btn mini session-del" data-del="${s.id}" title="Delete">×</button>
+      <button type="button" class="icon-btn mini session-del" data-del="${s.id}" title="Delete" aria-label="Delete conversation ${escapeAttr(s.title || 'Untitled')}">×</button>
     </li>`).join('');
 };
 renderSessions();
@@ -1870,6 +1935,7 @@ let paletteSel = 0;
 function buildPaletteItems() {
   const items = [];
   items.push({ icon: '💬', label: 'New chat', sub: 'Ctrl+N', run: () => newSession() });
+  items.push({ icon: '☰', label: 'Toggle settings sidebar', sub: '', run: () => { sidebarToggle?.click(); } });
   items.push({ icon: '🌓', label: 'Toggle theme', sub: '', run: () => document.getElementById('themeBtn').click() });
   items.push({ icon: '🔄', label: 'Clear current chat', sub: '', run: () => clearBtn.click() });
   items.push({ icon: '↓',  label: 'Export chat as markdown', sub: '', run: () => exportChat() });
@@ -1918,7 +1984,17 @@ function closePalette() { paletteOverlay.hidden = true; }
 document.getElementById('paletteBtn')?.addEventListener('click', openPalette);
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
+  if (mod && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (paletteOverlay && !paletteOverlay.hidden) closePalette();
+    else openPalette();
+    return;
+  }
+  if (mod && e.key === 'Enter' && paletteOverlay?.hidden) {
+    e.preventDefault();
+    chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
+    return;
+  }
   if (!paletteOverlay || paletteOverlay.hidden) return;
   if (e.key === 'Escape') { e.preventDefault(); closePalette(); return; }
   const list = paletteResults._filtered || [];
@@ -1998,7 +2074,11 @@ window.addEventListener('cc:session-saved', () => {
 });
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-init().then(() => { loadFiles(); loadMemory(); });
+init().then(() => {
+  loadFiles();
+  loadMemory();
+  syncSidebarAria();
+});
 // Refresh provider status periodically (e.g. env keys on the server).
 setInterval(async () => {
   try {
