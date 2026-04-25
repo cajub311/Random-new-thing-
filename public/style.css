@@ -265,6 +265,13 @@ input[type="range"]:hover::-moz-range-thumb {
 .speak-btn.speaking { color: var(--accent); }
 
 /* ── Artifact panel ───────────────────────────────────────────────────── */
+/* `hidden` must win over flex layout — otherwise overlays can cover the app on load (mobile). */
+.artifact-panel[hidden],
+.palette-overlay[hidden] {
+  display: none !important;
+  pointer-events: none;
+}
+
 .artifact-panel {
   position: fixed; top: 0; right: 0; height: 100%; width: min(520px, 50vw);
   background: var(--surface); border-left: 1px solid var(--border);
@@ -292,6 +299,22 @@ input[type="range"]:hover::-moz-range-thumb {
   border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden;
   display: flex; flex-direction: column;
 }
+.palette-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.palette-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.palette-close { flex-shrink: 0; }
 .palette-input { width: 100%; box-sizing: border-box; background: var(--surface); color: var(--text);
   border: 0; border-bottom: 1px solid var(--border); padding: 14px 16px; font-size: 15px; outline: none; }
 .palette-results { list-style: none; max-height: 50vh; overflow-y: auto; margin: 0; padding: 4px 0; }

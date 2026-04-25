@@ -122,6 +122,11 @@ function fillTrustStripSlots(root = document) {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
+  /* Ensure overlays never block the UI if `hidden` was ignored by layout CSS. */
+  closePalette();
+  const ap = document.getElementById('artifactPanel');
+  const af = document.getElementById('artifactFrame');
+  if (ap) { ap.hidden = true; if (af) af.srcdoc = ''; }
   loadSettings();
   loadSessions();
   try {
@@ -1989,6 +1994,7 @@ function closePalette() {
 }
 
 document.getElementById('paletteBtn')?.addEventListener('click', openPalette);
+document.getElementById('paletteCloseBtn')?.addEventListener('click', () => closePalette());
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'n' && paletteOverlay?.hidden) {

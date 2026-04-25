@@ -219,7 +219,10 @@
   <!-- ── Command palette ─────────────────────────────────────── -->
   <div class="palette-overlay" id="paletteOverlay" role="dialog" aria-modal="true" aria-labelledby="paletteTitle" aria-hidden="true" hidden>
     <div class="palette">
-      <h2 class="visually-hidden" id="paletteTitle">Command palette</h2>
+      <div class="palette-top">
+        <h2 class="palette-title" id="paletteTitle">Commands</h2>
+        <button type="button" class="palette-close icon-btn mini" id="paletteCloseBtn" title="Close" aria-label="Close command palette">✕</button>
+      </div>
       <input type="text" id="paletteInput" class="palette-input" placeholder="Type a command, chat name, or provider…" autocomplete="off" aria-label="Search command palette" aria-controls="paletteResults" />
       <ul id="paletteResults" class="palette-results" role="listbox" aria-label="Matching actions"></ul>
       <div class="palette-hint">↑↓ navigate · ↵ run · Esc close · <span class="palette-hint-kbd">⌘/Ctrl+N</span> new chat · <span class="palette-hint-kbd">⌘/Ctrl+Enter</span> send (when closed)</div>
