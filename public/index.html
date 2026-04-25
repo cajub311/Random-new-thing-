@@ -149,7 +149,7 @@
         </div>
         <button type="button" class="icon-btn" id="paletteBtn" title="Command palette (⌘/Ctrl+K)" aria-label="Open command palette">⌘K</button>
         <button type="button" class="icon-btn" id="themeBtn" title="Toggle light/dark" aria-label="Toggle light and dark theme">🌓</button>
-        <a class="topbar-github" href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener noreferrer" aria-label="OpenClaw source on GitHub">🐙 Source on GitHub</a>
+        <a class="topbar-github" href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener noreferrer" aria-label="OpenClaw source on GitHub"><span class="github-emoji" aria-hidden="true">🐙</span> <span class="github-label">Source on GitHub</span></a>
         <button type="button" class="icon-btn" id="clearBtn" title="Clear chat" aria-label="Clear conversation">🗑</button>
       </div>
     </header>
@@ -172,6 +172,9 @@
           <button type="button" class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old." aria-label="Example: simple quantum computing explanation">💡 Explain something</button>
         </div>
         <p class="tip" id="welcomeTip"><strong>🎉 No API key required</strong> to start — the free keyless Pollinations provider works immediately. Add a <a href="https://console.groq.com" target="_blank" rel="noopener">Groq</a> API key in the sidebar for faster responses; your key stays in this browser. Switch to <strong>Agent</strong> mode for web search, files, images, memory, and more.</p>
+        <div class="welcome-start">
+          <button type="button" class="welcome-start-btn" aria-label="Focus message box and start typing">Start chatting — type below ↓</button>
+        </div>
       </div>
     </div>
 
@@ -182,7 +185,7 @@
       <button type="button" class="icon-btn mic-btn" id="micBtn" title="Voice input (hold or click)" aria-label="Voice input" hidden>🎙</button>
       <textarea
         id="userInput"
-        placeholder="Ask anything, paste images, drop files… (Shift+Enter for new line)"
+        placeholder="Type a message… Shift+Enter for new line · attach 📎 or paste images"
         rows="1"
         autocomplete="off"
         aria-label="Message text"

@@ -1133,6 +1133,9 @@ function showWelcome() {
         <button type="button" class="quick-prompt" data-mode="auto" data-prompt="Explain quantum computing like I am 10 years old." aria-label="Example: simple quantum computing explanation">💡 Explain something</button>
       </div>
       <p class="tip"><strong>🎉 No API key required</strong> to start — Pollinations works out of the box. Paste a Groq key in the sidebar for much faster chat and agent runs. Type <code>/help</code> for commands.</p>
+      <div class="welcome-start">
+        <button type="button" class="welcome-start-btn" aria-label="Focus message box and start typing">Start chatting — type below ↓</button>
+      </div>
     </div>`;
   fillTrustStripSlots(messagesEl);
   const cards = document.getElementById('providerCardsWelcome');
@@ -1938,6 +1941,22 @@ const paletteInput = document.getElementById('paletteInput');
 const paletteResults = document.getElementById('paletteResults');
 let paletteItems = [];
 let paletteSel = 0;
+let paletteFocusBefore = null;
+
+function paletteMatchesQuery(item, q) {
+  const hay = `${item.label} ${item.sub || ''}`.toLowerCase();
+  if (hay.includes(q)) return true;
+  if (item.label.startsWith('Mode:')) {
+    const mode = item.label.replace(/^Mode:\s*/, '').trim().toLowerCase();
+    const aliases = {
+      auto: ['chat', 'stream', 'fallback', 'default'],
+      agent: ['tool', 'tools', 'action', 'web', 'file', 'image'],
+      'ask-all': ['ask', 'all', 'multi', 'compare', 'parallel'],
+    };
+    return (aliases[mode] || []).some(a => a.includes(q) || q.includes(a));
+  }
+  return false;
+}
 
 function buildPaletteItems() {
   const items = [];
@@ -1966,9 +1985,14 @@ function renderPalette() {
   if (!paletteResults) return;
   const q = paletteInput.value.trim().toLowerCase();
   const filtered = q
-    ? paletteItems.filter(i => i.label.toLowerCase().includes(q) || (i.sub || '').toLowerCase().includes(q))
+    ? paletteItems.filter(i => paletteMatchesQuery(i, q))
     : paletteItems;
   paletteSel = Math.min(paletteSel, Math.max(0, filtered.length - 1));
+  if (filtered.length === 0) {
+    paletteResults.innerHTML = `<li class="palette-empty" role="status">No matches — try “chat”, “agent”, or a provider name</li>`;
+    paletteResults._filtered = [];
+    return;
+  }
   paletteResults.innerHTML = filtered.slice(0, 50).map((it, i) => `
     <li role="option" aria-selected="${i === paletteSel ? 'true' : 'false'}" data-i="${i}" class="${i === paletteSel ? 'selected' : ''}" tabindex="${i === paletteSel ? '0' : '-1'}">
       <span class="p-icon" aria-hidden="true">${it.icon}</span>
@@ -1979,6 +2003,7 @@ function renderPalette() {
 }
 
 function openPalette() {
+  paletteFocusBefore = document.activeElement;
   paletteItems = buildPaletteItems();
   paletteInput.value = '';
   paletteSel = 0;
@@ -1991,6 +2016,13 @@ function closePalette() {
   if (!paletteOverlay) return;
   paletteOverlay.hidden = true;
   paletteOverlay.setAttribute('aria-hidden', 'true');
+  const prev = paletteFocusBefore;
+  paletteFocusBefore = null;
+  if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+    try { prev.focus(); } catch { userInput?.focus(); }
+  } else {
+    userInput?.focus();
+  }
 }
 
 document.getElementById('paletteBtn')?.addEventListener('click', openPalette);
@@ -2030,6 +2062,14 @@ paletteResults?.addEventListener('click', (e) => {
   if (it) { closePalette(); it.run(); }
 });
 paletteOverlay?.addEventListener('click', (e) => { if (e.target === paletteOverlay) closePalette(); });
+
+messagesEl?.addEventListener('click', e => {
+  if (e.target.closest('.welcome-start-btn')) {
+    e.preventDefault();
+    userInput?.focus();
+    userInput?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+});
 
 // ── Scroll-to-bottom button ──────────────────────────────────────────────
 (function scrollToBottom() {
